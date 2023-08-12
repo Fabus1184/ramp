@@ -1,0 +1,7 @@
+{
+    "search_directories": ["/home/fabian/Musik"],
+    "extensions": ["flac", "mp3"],
+    "cache_path": "./cache",
+    "log_path": "./rcmp.log",
+    "gain": 0.5
+}
