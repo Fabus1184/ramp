@@ -1,32 +1,87 @@
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
-    Device, OutputCallbackInfo, Stream, StreamConfig,
+    Device, OutputCallbackInfo, StreamConfig,
 };
-use log::{error, info, warn};
+use log::{error, info, trace, warn};
+use souvlaki::{MediaControls, MediaMetadata, MediaPlayback, PlatformConfig};
 use symphonia::core::{
     audio::{Channels, SampleBuffer, SignalSpec},
     codecs::{DecoderOptions, CODEC_TYPE_NULL},
     formats::FormatOptions,
     io::{MediaSourceStream, MediaSourceStreamOptions},
-    meta::MetadataOptions,
+    meta::{MetadataOptions, StandardVisualKey},
     probe::Hint,
 };
+use tempfile::NamedTempFile;
 
 use crate::{config::Config, Song};
 
-use std::{collections::VecDeque, path::PathBuf, sync::mpsc::Receiver};
+use std::{
+    collections::VecDeque,
+    io::Write,
+    path::{Path, PathBuf},
+    sync::{
+        mpsc::{Receiver, SyncSender},
+        Arc, Mutex,
+    },
+    time::Duration,
+};
+
+enum StreamCommand {
+    Play,
+    Pause,
+}
 
 pub struct Player<'a> {
     playing: bool,
-    current: Option<(&'a Song, Stream)>,
-    next: VecDeque<(&'a Song, Receiver<f32>)>,
+    current: Option<(&'a Song, PathBuf, SyncSender<StreamCommand>)>,
+    next: VecDeque<(&'a Song, PathBuf, Receiver<SampleBuffer<f32>>)>,
     config: &'a Config,
     device: Device,
     stream_config: StreamConfig,
+    pub media_controls: MediaControls,
+    tempfile: NamedTempFile,
+}
+
+fn song_cover(path: &Path) -> Option<(Box<[u8]>, String)> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| {
+            warn!("Failed to open file {:?} {:?}", path, e);
+        })
+        .ok()?;
+    let mss = MediaSourceStream::new(Box::new(file), MediaSourceStreamOptions::default());
+
+    let format_opts = FormatOptions::default();
+    let metadata_opts = MetadataOptions::default();
+    let hint = Hint::new();
+
+    let mut result = symphonia::default::get_probe()
+        .format(&hint, mss, &format_opts, &metadata_opts)
+        .map_err(|e| {
+            warn!("Failed to read metadata from {:?} {:?}", path, e);
+        })
+        .ok()?;
+
+    let mut metadata = result.format.metadata();
+
+    let meta = metadata
+        .skip_to_latest()
+        .ok_or_else(|| {
+            warn!("Failed to skip to latest metadata from {:?}", path);
+        })
+        .ok()?;
+
+    meta.visuals()
+        .into_iter()
+        .filter(|v| v.usage == Some(StandardVisualKey::FrontCover))
+        .filter(|v| ["image/png", "image/jpeg"].contains(&v.media_type.as_str()))
+        .map(|v| v.clone())
+        .map(|v| (v.data, v.media_type))
+        .next()
 }
 
 impl<'a> Player<'a> {
-    pub fn new(config: &'a Config) -> Result<Self, ()> {
+    pub fn new(config: &'a Config) -> Result<Arc<Mutex<Player<'a>>>, ()> {
         let device = cpal::default_host()
             .default_output_device()
             .ok_or_else(|| {
@@ -40,70 +95,154 @@ impl<'a> Player<'a> {
             })?
             .into();
 
-        Ok(Player {
+        let media_controls = MediaControls::new(PlatformConfig {
+            display_name: "rcmp",
+            dbus_name: "rcmp",
+            hwnd: None,
+        })
+        .expect("Failed to create media controls");
+
+        let player = Arc::new(Mutex::new(Player {
             playing: false,
             current: None,
             next: VecDeque::new(),
             config,
             device,
             stream_config,
-        })
+            media_controls,
+            tempfile: NamedTempFile::new().expect("Failed to create tempfile"),
+        }));
+
+        Ok(player)
     }
 
     pub fn play(&mut self) -> Result<(), String> {
-        match &self.current {
-            Some((_, stream)) => stream
-                .play()
-                .map_err(|e| format!("Failed to play output stream {:?}", e))
-                .map(|()| {
-                    self.playing = true;
-                }),
-            None => {
-                if let Some((song, rx)) = self.next.pop_front() {
-                    let gain_factor = song.gain.unwrap_or(1.0);
+        trace!("play: current is_some: {:?}", self.current.is_some());
 
-                    let stream = self
-                        .device
+        match self.current.as_ref() {
+            Some((song, path, tx)) => {
+                let cover_url = if let Some((data, _filetype)) = song_cover(path) {
+                    trace!("play: writing cover to {:?}", self.tempfile.path());
+
+                    self.tempfile
+                        .write_all(&data)
+                        .expect("Failed to write cover to tempfile");
+                    self.tempfile.flush().expect("Failed to flush tempfile");
+                    Some(format!("file://{}", self.tempfile.path().display()))
+                } else {
+                    None
+                };
+
+                tx.send(StreamCommand::Play)
+                    .map_err(|e| format!("Failed to play output stream {:?}", e))
+                    .and_then(|_| {
+                        self.playing = true;
+                        self.media_controls
+                            .set_playback(MediaPlayback::Playing { progress: None })
+                            .map_err(|e| format!("Failed to set playback {:?}", e))?;
+
+                        self.media_controls
+                            .set_metadata(MediaMetadata {
+                                title: song.title.as_ref().map(|s| s.as_str()),
+                                album: song.album.as_ref().map(|s| s.as_str()),
+                                artist: song.artist.as_ref().map(|s| s.as_str()),
+                                cover_url: cover_url.as_ref().map(|s| s.as_str()),
+                                duration: None,
+                            })
+                            .map_err(|e| format!("Failed to set metadata {:?}", e))
+                    })
+            }
+            None => {
+                trace!("play: no current stream, trying to get next");
+
+                if let Some((song, path, rx)) = self.next.pop_front() {
+                    trace!("play: got next song {:?}", song);
+                    let gain_factor = song.gain.unwrap_or(1.0);
+                    let mut buf = Vec::new();
+
+                    let (ctx, crx) = std::sync::mpsc::sync_channel::<StreamCommand>(0);
+
+                    let stream_config = self.stream_config.clone();
+                    let device =
+                        unsafe { std::mem::transmute::<&'_ Device, &'static Device>(&self.device) };
+
+                    std::thread::spawn(move || {
+                        let stream = device
                         .build_output_stream(
-                            &self.stream_config,
+                            &stream_config,
                             move |data: &mut [f32], _info: &OutputCallbackInfo| {
-                                data.iter_mut().for_each(|d| {
-                                    *d = rx.recv().map(|s| s * gain_factor).unwrap_or_else(|e| {
-                                        warn!("Buffer underrun: {e:?}",);
-                                        0.0
-                                    })
-                                });
+                                while buf.len() < data.len() {
+                                    match rx.recv() {
+                                        Ok(s) => buf.extend(
+                                            s.samples().into_iter().map(|x| x * gain_factor),
+                                        ),
+                                        Err(e) => {
+                                            warn!("Failed to receive sample, sender disconnected {:?}",e);
+                                            return;
+                                        }
+                                    }
+                                }
+
+                                data.copy_from_slice(buf.drain(0..data.len()).as_slice());
                             },
                             |e| {
                                 warn!("Output stream error {:?}", e);
                             },
-                            None,
+                            Some(Duration::from_secs_f32(1.0)),
                         )
-                        .map_err(|e| format!("Failed to build output stream {:?}", e))?;
+                        .map_err(|e| format!("Failed to build output stream {:?}", e)).expect("Failed to build output stream");
 
-                    self.current = Some((song, stream));
+                        loop {
+                            match crx.recv() {
+                                Ok(s) => match s {
+                                    StreamCommand::Play => {
+                                        stream.play().expect("Failed to play output stream")
+                                    }
+                                    StreamCommand::Pause => {
+                                        stream.pause().expect("Failed to pause output stream")
+                                    }
+                                },
+                                Err(e) => {
+                                    warn!("Failed to receive sample, sender disconnected {:?}", e);
+                                    return;
+                                }
+                            }
+                        }
+                    });
 
+                    self.current = Some((song, path, ctx));
                     self.play()
                 } else {
+                    trace!("play: no next song");
                     Ok(())
                 }
             }
         }
     }
 
-    pub fn stop(&mut self) {
+    pub fn stop(&mut self) -> Result<(), String> {
+        trace!("stopping player");
         self.current = None;
         self.playing = false;
+        self.media_controls
+            .set_playback(MediaPlayback::Stopped)
+            .map_err(|e| format!("Failed to set playback {:?}", e))
     }
 
     pub fn pause(&mut self) -> Result<(), String> {
-        if let Some((_, stream)) = &self.current {
-            stream
-                .pause()
+        trace!("pausing player");
+        if let Some((_, _, ctx)) = self.current.as_ref() {
+            trace!("pause: pausing stream");
+            ctx.send(StreamCommand::Pause)
                 .map_err(|e| format!("Failed to pause output stream {:?}", e))
-                .map(|()| {
+                .and_then(|()| {
                     self.playing = false;
+                    self.media_controls
+                        .set_playback(MediaPlayback::Paused { progress: None })
+                        .map_err(|e| format!("Failed to set playback {:?}", e))
                 })?;
+        } else {
+            trace!("pause: no stream to pause");
         }
 
         Ok(())
@@ -115,12 +254,14 @@ impl<'a> Player<'a> {
         path: &Vec<String>,
         file_name: &String,
     ) -> Result<(), String> {
+        trace!("queueing song {:?}", song);
+
         let path = path
             .into_iter()
             .chain(std::iter::once(file_name))
             .fold(PathBuf::new(), |acc, p| acc.join(p));
 
-        let src = std::fs::File::open(path).map_err(|e| format!("{:?}", e))?;
+        let src = std::fs::File::open(path.clone()).map_err(|e| format!("{:?}", e))?;
 
         let mss = MediaSourceStream::new(Box::new(src), MediaSourceStreamOptions::default());
         let probed = symphonia::default::get_probe()
@@ -148,7 +289,7 @@ impl<'a> Player<'a> {
                 std::process::exit(1);
             });
 
-        let (tx, rx) = std::sync::mpsc::sync_channel::<f32>(2 * 48_000);
+        let (tx, rx) = std::sync::mpsc::sync_channel::<SampleBuffer<f32>>(512);
 
         let handle = std::thread::spawn(move || {
             'l: loop {
@@ -172,14 +313,12 @@ impl<'a> Player<'a> {
                             );
                             b.copy_interleaved_ref(data);
 
-                            for s in b.samples() {
-                                match tx.send(*s) {
-                                    Err(e) => {
-                                        error!("Failed to send sample {:?}", e);
-                                        break 'l;
-                                    }
-                                    _ => {}
+                            match tx.send(b) {
+                                Err(e) => {
+                                    error!("Failed to send sample {:?}", e);
+                                    break 'l;
                                 }
+                                _ => {}
                             }
                         }
                     }
@@ -196,7 +335,7 @@ impl<'a> Player<'a> {
         info!("thread {:?} started, detaching now", handle.thread().id());
         drop(handle);
 
-        self.next.push_back((song, rx));
+        self.next.push_back((song, path, rx));
 
         if !self.playing {
             self.play()?;
@@ -212,21 +351,22 @@ impl<'a> Player<'a> {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self) -> Result<(), String> {
         self.next.clear();
-        self.stop();
+        self.stop()
     }
 
     pub fn skip(&mut self) -> Result<(), String> {
-        self.stop();
+        trace!("skipping song");
+        self.stop()?;
         self.play()
     }
 
     pub fn current(&self) -> Option<&Song> {
-        self.current.as_ref().map(|(s, _)| *s)
+        self.current.as_ref().map(|(s, _, _)| *s)
     }
 
     pub fn nexts(&self) -> impl Iterator<Item = &Song> {
-        self.next.iter().map(|(s, _)| *s)
+        self.next.iter().map(|(s, _, _)| *s)
     }
 }
