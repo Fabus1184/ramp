@@ -17,19 +17,27 @@ use walkdir::WalkDir;
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub enum Cache {
-    File {
-        modified: SystemTime,
-        song: Song,
-    },
-    Directory {
-        children: HashMap<String, Box<Cache>>,
-    },
+    File { modified: SystemTime, song: Song },
+    Directory { children: HashMap<String, Cache> },
+}
+
+impl Clone for Cache {
+    fn clone(&self) -> Cache {
+        panic!("Cache::clone called")
+    }
 }
 
 impl Cache {
     pub fn empty() -> Self {
         Cache::Directory {
             children: HashMap::new(),
+        }
+    }
+
+    pub fn songs(&self) -> Box<dyn Iterator<Item = &Song> + '_> {
+        match self {
+            Cache::File { song, .. } => Box::new(std::iter::once(song)),
+            Cache::Directory { children } => Box::new(children.values().flat_map(|c| c.songs())),
         }
     }
 
@@ -50,7 +58,7 @@ impl Cache {
                         SystemTime::UNIX_EPOCH
                     });
 
-                    children.insert(name, Box::new(Cache::File { modified, song }));
+                    children.insert(name, Cache::File { modified, song });
 
                     Ok(())
                 } else {
@@ -74,19 +82,15 @@ impl Cache {
 
                     children
                         .entry(next_dir)
-                        .or_insert_with(|| {
-                            Box::new(Cache::Directory {
-                                children: HashMap::new(),
-                            })
+                        .or_insert_with(|| Cache::Directory {
+                            children: HashMap::new(),
                         })
                         .insert_file(&next_path, meta, song)
                 }
             }
         }
     }
-}
 
-impl Cache {
     pub fn load(config: &Config) -> Option<Self> {
         let s = std::fs::read_to_string(&config.cache_path)
             .map_err(|e| {
@@ -122,7 +126,7 @@ impl Cache {
             let rest = path[1..].to_vec();
 
             match self {
-                Cache::File { .. } => None,
+                Cache::File { .. } => panic!("Cache::get called on Cache::File"),
                 Cache::Directory { children } => children.get(next)?.get(&rest),
             }
         }

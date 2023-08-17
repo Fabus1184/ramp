@@ -1,4 +1,7 @@
+use std::sync::Mutex;
+
 use crossterm::event::Event;
+use log::trace;
 use ratatui::{
     prelude::Constraint,
     style::{Color, Modifier, Style},
@@ -9,18 +12,26 @@ use crate::player::Player;
 
 use super::Tui;
 
-pub struct Queue {}
+pub struct Queue<'a> {
+    player: &'a Mutex<Player<'a>>,
+}
 
-impl Queue {
-    pub fn new() -> Self {
-        Queue {}
+impl<'a> Queue<'a> {
+    pub fn new(player: &'a Mutex<Player<'a>>) -> Self {
+        Queue { player }
     }
 }
 
-impl<'a> Tui<&mut Player<'a>> for Queue {
-    type W = Table<'a>;
+impl Tui for Queue<'_> {
+    fn draw(
+        &self,
+        area: ratatui::prelude::Rect,
+        f: &mut ratatui::Frame<'_, ratatui::prelude::CrosstermBackend<std::io::Stdout>>,
+    ) {
+        trace!("drawing queue, lock");
 
-    fn tui(&self, player: &mut Player<'a>) -> Table<'a> {
+        let player = self.player.lock().unwrap();
+
         let table = Table::new(
             std::iter::once(player.current())
                 .flatten()
@@ -62,8 +73,8 @@ impl<'a> Tui<&mut Player<'a>> for Queue {
             Constraint::Percentage(30),
         ]);
 
-        table
+        f.render_widget(table, area);
     }
 
-    fn input(&mut self, _event: &Event, _player: &mut Player<'a>) {}
+    fn input(&mut self, _event: &Event) {}
 }

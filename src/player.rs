@@ -14,16 +14,13 @@ use symphonia::core::{
 };
 use tempfile::NamedTempFile;
 
-use crate::{config::Config, Song};
+use crate::Song;
 
 use std::{
     collections::VecDeque,
     io::Write,
     path::{Path, PathBuf},
-    sync::{
-        mpsc::{Receiver, SyncSender},
-        Arc, Mutex,
-    },
+    sync::mpsc::{Receiver, SyncSender},
     time::Duration,
 };
 
@@ -36,11 +33,10 @@ pub struct Player<'a> {
     playing: bool,
     current: Option<(&'a Song, PathBuf, SyncSender<StreamCommand>)>,
     next: VecDeque<(&'a Song, PathBuf, Receiver<SampleBuffer<f32>>)>,
-    config: &'a Config,
     device: Device,
     stream_config: StreamConfig,
     pub media_controls: MediaControls,
-    tempfile: NamedTempFile,
+    pub tempfile: NamedTempFile,
 }
 
 fn song_cover(path: &Path) -> Option<(Box<[u8]>, String)> {
@@ -81,7 +77,7 @@ fn song_cover(path: &Path) -> Option<(Box<[u8]>, String)> {
 }
 
 impl<'a> Player<'a> {
-    pub fn new(config: &'a Config) -> Result<Arc<Mutex<Player<'a>>>, ()> {
+    pub fn new() -> Result<Player<'a>, ()> {
         let device = cpal::default_host()
             .default_output_device()
             .ok_or_else(|| {
@@ -102,18 +98,15 @@ impl<'a> Player<'a> {
         })
         .expect("Failed to create media controls");
 
-        let player = Arc::new(Mutex::new(Player {
+        Ok(Player {
             playing: false,
             current: None,
             next: VecDeque::new(),
-            config,
             device,
             stream_config,
             media_controls,
             tempfile: NamedTempFile::new().expect("Failed to create tempfile"),
-        }));
-
-        Ok(player)
+        })
     }
 
     pub fn play(&mut self) -> Result<(), String> {
@@ -122,12 +115,26 @@ impl<'a> Player<'a> {
         match self.current.as_ref() {
             Some((song, path, tx)) => {
                 let cover_url = if let Some((data, _filetype)) = song_cover(path) {
-                    trace!("play: writing cover to {:?}", self.tempfile.path());
+                    trace!(
+                        "play: writing cover of {} (checksum {}) to tempfile",
+                        path.display(),
+                        data.iter().fold(0, |acc, x| acc ^ x)
+                    );
+
+                    self.tempfile = NamedTempFile::new().expect("Failed to create tempfile");
 
                     self.tempfile
                         .write_all(&data)
                         .expect("Failed to write cover to tempfile");
+
                     self.tempfile.flush().expect("Failed to flush tempfile");
+
+                    self.tempfile
+                        .as_file()
+                        .sync_all()
+                        .expect("Failed to sync tempfile");
+
+                    trace!("play: wrote cover to {:?}", self.tempfile.path());
                     Some(format!("file://{}", self.tempfile.path().display()))
                 } else {
                     None
@@ -337,7 +344,7 @@ impl<'a> Player<'a> {
 
         self.next.push_back((song, path, rx));
 
-        if !self.playing {
+        if self.current.is_none() {
             self.play()?;
         }
 
@@ -362,11 +369,11 @@ impl<'a> Player<'a> {
         self.play()
     }
 
-    pub fn current(&self) -> Option<&Song> {
-        self.current.as_ref().map(|(s, _, _)| *s)
+    pub fn current(&self) -> Option<&'a Song> {
+        self.current.as_ref().map(|&(s, _, _)| s)
     }
 
-    pub fn nexts(&self) -> impl Iterator<Item = &Song> {
-        self.next.iter().map(|(s, _, _)| *s)
+    pub fn nexts(&self) -> impl Iterator<Item = &'a Song> + '_ {
+        self.next.iter().map(|&(s, _, _)| s)
     }
 }
