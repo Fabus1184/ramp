@@ -31,7 +31,12 @@ enum StreamCommand {
 
 pub struct Player<'a> {
     playing: bool,
-    current: Option<(&'a Song, PathBuf, SyncSender<StreamCommand>)>,
+    current: Option<(
+        &'a Song,
+        PathBuf,
+        SyncSender<StreamCommand>,
+        Option<(Box<[u8]>, String)>,
+    )>,
     next: VecDeque<(&'a Song, PathBuf, Receiver<SampleBuffer<f32>>)>,
     device: Device,
     stream_config: StreamConfig,
@@ -113,8 +118,8 @@ impl<'a> Player<'a> {
         trace!("play: current is_some: {:?}", self.current.is_some());
 
         match self.current.as_ref() {
-            Some((song, path, tx)) => {
-                let cover_url = if let Some((data, _filetype)) = song_cover(path) {
+            Some((song, path, tx, cover)) => {
+                let cover_url = if let Some((data, _filetype)) = cover {
                     trace!(
                         "play: writing cover of {} (checksum {}) to tempfile",
                         path.display(),
@@ -217,7 +222,9 @@ impl<'a> Player<'a> {
                         }
                     });
 
-                    self.current = Some((song, path, ctx));
+                    let cover = song_cover(&path);
+
+                    self.current = Some((song, path, ctx, cover));
                     self.play()
                 } else {
                     trace!("play: no next song");
@@ -238,7 +245,7 @@ impl<'a> Player<'a> {
 
     pub fn pause(&mut self) -> Result<(), String> {
         trace!("pausing player");
-        if let Some((_, _, ctx)) = self.current.as_ref() {
+        if let Some((_, _, ctx, _)) = self.current.as_ref() {
             trace!("pause: pausing stream");
             ctx.send(StreamCommand::Pause)
                 .map_err(|e| format!("Failed to pause output stream {:?}", e))
@@ -369,8 +376,10 @@ impl<'a> Player<'a> {
         self.play()
     }
 
-    pub fn current(&self) -> Option<&'a Song> {
-        self.current.as_ref().map(|&(s, _, _)| s)
+    pub fn current(&self) -> Option<(&'a Song, Option<&(Box<[u8]>, String)>)> {
+        self.current
+            .as_ref()
+            .map(|&(s, _, _, ref c)| (s, c.as_ref()))
     }
 
     pub fn nexts(&self) -> impl Iterator<Item = &'a Song> + '_ {

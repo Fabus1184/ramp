@@ -1,3 +1,4 @@
+mod fancy;
 mod files;
 mod log;
 mod queue;
@@ -21,7 +22,7 @@ use ratatui::{
 
 use crate::{cache::Cache, config::Config, player::Player};
 
-use self::{files::Files, log::Log, queue::Queue, search::Search, tabs::Tabs};
+use self::{fancy::Fancy, files::Files, log::Log, queue::Queue, search::Search, tabs::Tabs};
 
 pub trait Tui {
     fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>);
@@ -47,6 +48,7 @@ pub fn tui<'a>(
             (" Queue 🕰️  ", Box::new(Queue::new(player))),
             (" Search 🔎  ", Box::new(Search::new(cache))),
             (" Log 📃  ", Box::new(Log::new())),
+            (" Fancy shit ✨ ", Box::new(Fancy::new(player))),
         ],
         &running,
     );

@@ -26,3 +26,4 @@ symphonia = { version = "0.5.3", features = ["mp3"] }
 souvlaki = "0.6.1"
 tempfile = "3.7.1"
 strsim = "0.10.0"
+image = { version = "0.24.7", default-features = false, features = ["png", "jpeg"] }

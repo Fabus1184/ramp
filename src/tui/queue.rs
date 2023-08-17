@@ -33,7 +33,7 @@ impl Tui for Queue<'_> {
         let player = self.player.lock().unwrap();
 
         let table = Table::new(
-            std::iter::once(player.current())
+            std::iter::once(player.current().map(|(s, _)| s))
                 .flatten()
                 .chain(player.nexts())
                 .map(|s| {

@@ -16,6 +16,8 @@ mod config;
 mod player;
 mod tui;
 
+pub const UNKNOWN_STRING: &'static str = "<unknown>";
+
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct Song {
     title: Option<String>,
