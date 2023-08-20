@@ -3,26 +3,31 @@ mod files;
 mod log;
 mod queue;
 mod search;
+mod song_table;
+mod status;
 mod tabs;
 
-use std::{io::Stdout, sync::Mutex};
+use std::{
+    io::Stdout,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use crossterm::{
     event::{self, Event},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 
+use ::log::trace;
 use ratatui::{
     backend::CrosstermBackend,
-    prelude::Rect,
-    style::{Color, Style},
-    widgets::{Block, BorderType, Borders},
+    prelude::{Constraint, Direction, Layout, Rect},
     Frame, Terminal,
 };
 
 use crate::{cache::Cache, config::Config, player::Player};
 
-use self::{fancy::Fancy, files::Files, log::Log, queue::Queue, search::Search, tabs::Tabs};
+use self::{fancy::Fancy, files::Files, queue::Queue, search::Search, status::Status, tabs::Tabs};
 
 pub trait Tui {
     fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>);
@@ -31,8 +36,8 @@ pub trait Tui {
 
 pub fn tui<'a>(
     _config: &'a Config,
-    cache: &'a Cache,
-    player: &'a Mutex<Player<'a>>,
+    cache: Arc<Cache>,
+    player: Arc<Mutex<Player>>,
 ) -> std::io::Result<()> {
     let stdout = std::io::stdout();
     let backend = CrosstermBackend::new(stdout);
@@ -44,29 +49,38 @@ pub fn tui<'a>(
     let running = Mutex::new(true);
     let mut tabs = Tabs::new(
         vec![
-            (" Files 🗃️  ", Box::new(Files::new(cache, player))),
-            (" Queue 🕰️  ", Box::new(Queue::new(player))),
-            (" Search 🔎  ", Box::new(Search::new(cache))),
-            (" Log 📃  ", Box::new(Log::new())),
-            (" Fancy shit ✨ ", Box::new(Fancy::new(player))),
+            (
+                " Files 🗃️ ",
+                Box::new(Files::new(cache.clone(), player.clone())),
+            ),
+            ("Queue 🕰️ ", Box::new(Queue::new(player.clone()))),
+            (
+                "Search 🔎", /* idk, whatever */
+                Box::new(Search::new(cache.clone())),
+            ),
+            ("Fancy shit ✨ ", Box::new(Fancy::new(player.clone()))),
         ],
         &running,
     );
 
+    let usage = Status::new(player.clone());
+
     loop {
         terminal.draw(|f| {
-            f.render_widget(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Cyan)),
-                f.size(),
-            );
-            tabs.draw(f.size(), f);
+            let main_area = Layout::new()
+                .constraints([Constraint::Min(1), Constraint::Length(4)])
+                .direction(Direction::Vertical)
+                .split(f.size());
+
+            tabs.draw(main_area[0], f);
+            usage.draw(main_area[1], f);
         })?;
 
-        tabs.input(&event::read()?);
+        if event::poll(Duration::from_secs_f32(0.2))? {
+            tabs.input(&event::read()?);
+        }
 
+        trace!("locking player");
         if !*running.lock().unwrap() {
             break;
         }

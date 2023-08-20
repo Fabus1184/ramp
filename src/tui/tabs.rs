@@ -3,8 +3,10 @@ use std::{io::Stdout, sync::Mutex};
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use log::trace;
 use ratatui::{
-    prelude::{CrosstermBackend, Rect},
-    style::{Modifier, Style},
+    prelude::{CrosstermBackend, Margin, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{block::Title, Block, BorderType, Borders},
     Frame,
 };
 
@@ -28,20 +30,45 @@ impl<'a> Tabs<'a> {
 
 impl Tui for Tabs<'_> {
     fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) {
-        let tabs = ratatui::widgets::Tabs::new(self.tabs.iter().map(|(title, _)| *title).collect())
-            .select(self.selected)
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD));
-        f.render_widget(tabs, area);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(Title::from(Line::from(
+                self.tabs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (name, _))| {
+                        Span::styled(
+                            *name,
+                            if i == self.selected {
+                                Style::default()
+                                    .add_modifier(Modifier::BOLD)
+                                    .fg(Color::LightGreen)
+                            } else {
+                                Style::default().add_modifier(Modifier::BOLD)
+                            },
+                        )
+                    })
+                    .fold(Vec::new(), |mut acc, span| {
+                        if acc.is_empty() {
+                            acc.push(span);
+                        } else {
+                            acc.push(Span::from(" | "));
+                            acc.push(span);
+                        }
+                        acc
+                    }),
+            )));
+        f.render_widget(block, area);
 
         let (name, inner) = self.tabs.get(self.selected).expect("Tab not found");
+
         trace!("tabs::draw, inner: {:?}", name);
         inner.draw(
-            Rect {
-                x: area.x + 1,
-                y: area.y + 1,
-                width: area.width - 2,
-                height: area.height - 2,
-            },
+            area.inner(&Margin {
+                vertical: 1,
+                horizontal: 1,
+            }),
             f,
         );
     }
@@ -57,6 +84,7 @@ impl Tui for Tabs<'_> {
                     self.selected = (self.selected.wrapping_sub(1)) % self.tabs.len();
                 }
                 KeyCode::Char('q') => {
+                    trace!("locking player");
                     *self.running.lock().unwrap() = false;
                 }
                 _ => {

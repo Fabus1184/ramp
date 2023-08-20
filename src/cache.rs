@@ -1,18 +1,15 @@
-use crate::{config::Config, Song};
+use crate::{audio, config::Config, song::Song};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::Metadata,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
     time::SystemTime,
 };
 
 use log::warn;
-use symphonia::core::{
-    formats::FormatOptions,
-    io::{MediaSourceStream, MediaSourceStreamOptions},
-    meta::{MetadataOptions, StandardTagKey},
-    probe::Hint,
-};
+
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use walkdir::WalkDir;
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -92,17 +89,13 @@ impl Cache {
     }
 
     pub fn load(config: &Config) -> Option<Self> {
-        let s = std::fs::read_to_string(&config.cache_path)
+        let s = std::fs::read(&config.cache_path)
             .map_err(|e| {
                 warn!("Failed to read cache file {:?}", e);
             })
             .ok()?;
 
-        let mut ds = serde_json::Deserializer::from_str(s.as_str());
-        ds.disable_recursion_limit();
-        let ds = serde_stacker::Deserializer::new(&mut ds);
-
-        serde::Deserialize::deserialize(ds)
+        bitcode::deserialize(&s)
             .map_err(|e| {
                 warn!("Failed to deserialize cache file {:?}", e);
             })
@@ -110,8 +103,8 @@ impl Cache {
     }
 
     pub fn save(&self, config: &Config) -> Result<(), String> {
-        let s = serde_json::to_string(&self)
-            .map_err(|e| format!("Failed to serialize cache {:?}", e))?;
+        let s =
+            bitcode::serialize(self).map_err(|e| format!("Failed to serialize cache {:?}", e))?;
         std::fs::write(&config.cache_path, s)
             .map_err(|e| format!("Failed to write cache file {:?}", e))?;
 
@@ -132,12 +125,56 @@ impl Cache {
         }
     }
 
-    pub fn cache_files(&mut self, config: &Config) {
+    fn merge_into(&mut self, cache: Cache) {
+        match (self, cache) {
+            (Cache::Directory { children: c1 }, Cache::Directory { children: c2 }) => {
+                for (k, v) in c2 {
+                    if let Some(c) = c1.get_mut(&k) {
+                        c.merge_into(v);
+                    } else {
+                        c1.insert(k, v);
+                    }
+                }
+            }
+            (a, b) => panic!("Cache::merge called on {:?} and {:?}", a, b),
+        }
+    }
+
+    pub fn build_from_config(config: &Config) -> Self {
+        let n = config
+            .search_directories
+            .iter()
+            .flat_map(|d| WalkDir::new(d))
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .count();
+
+        let i = AtomicUsize::new(0);
+
         config
             .search_directories
             .iter()
             .flat_map(|d| WalkDir::new(d))
-            .flat_map(|d| (d.map_err(|e| warn!("Failed to read directory {:?}", e))))
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_dir())
+            .collect::<Vec<_>>()
+            .par_iter()
+            .map(|p| Cache::build_from_path(p.path(), &config.extensions, n, &i))
+            .reduce(Cache::empty, |mut a, b| {
+                a.merge_into(b);
+                a
+            })
+    }
+
+    fn build_from_path<P>(path: P, extensions: &HashSet<String>, n: usize, i: &AtomicUsize) -> Cache
+    where
+        P: AsRef<std::path::Path>,
+    {
+        let mut cache = Cache::empty();
+
+        WalkDir::new(path)
+            .into_iter()
+            .flat_map(|d| (d.map_err(|e| warn!("Failed to read file {:?}", e))))
             .filter(|d| d.file_type().is_file())
             .filter_map(|d| {
                 d.metadata()
@@ -149,92 +186,31 @@ impl Cache {
                 d.path()
                     .extension()
                     .and_then(|s| s.to_str())
-                    .map(|e| config.extensions.contains(e))
+                    .map(|e| extensions.contains(e))
                     .unwrap_or(false)
             })
-            .filter_map(|(f, m)| {
-                let path = f.path();
-
-                let file = std::fs::File::open(path)
-                    .map_err(|e| {
-                        warn!("Failed to open file {:?} {:?}", path, e);
-                    })
-                    .ok()?;
-                let mss =
-                    MediaSourceStream::new(Box::new(file), MediaSourceStreamOptions::default());
-
-                let format_opts = FormatOptions::default();
-                let metadata_opts = MetadataOptions::default();
-                let hint = Hint::new();
-
-                let mut result = symphonia::default::get_probe()
-                    .format(&hint, mss, &format_opts, &metadata_opts)
-                    .map_err(|e| {
-                        warn!("Failed to read metadata from {:?} {:?}", path, e);
-                    })
-                    .ok()?;
-
-                let mut metadata = result.format.metadata();
-
-                let meta = metadata
-                    .skip_to_latest()
-                    .ok_or_else(|| {
-                        warn!("Failed to skip to latest metadata from {:?}", path);
-                    })
-                    .ok()?;
-
-                let [title, artist, album, year, track, gain]: [Option<String>; 6] = [
-                    StandardTagKey::TrackTitle,
-                    StandardTagKey::Artist,
-                    StandardTagKey::Album,
-                    StandardTagKey::ReleaseDate,
-                    StandardTagKey::TrackNumber,
-                    StandardTagKey::ReplayGainTrackGain,
-                ]
-                .into_iter()
-                .map(|t| {
-                    meta.tags()
-                        .into_iter()
-                        .find(|t2| t2.std_key == Some(t))
-                        .map(|t| t.value.to_string())
-                })
-                .collect::<Vec<_>>()
-                .try_into()
-                .expect("Failed to convert tags");
-
-                let gain = gain.and_then(|g| parse_track_gain(&g));
-                if gain.is_none() {
-                    warn!(
-                        "Failed to parse gain from {:?}",
-                        meta.tags()
-                            .into_iter()
-                            .find(|t2| t2.std_key == Some(StandardTagKey::ReplayGainTrackGain))
-                            .map(|t| t.value.to_string())
-                    );
-                }
-
-                Some((
-                    f,
-                    m,
-                    Song {
-                        title,
-                        artist,
-                        album,
-                        year,
-                        track,
-                        gain,
-                    },
-                ))
+            .inspect(|(d, _)| {
+                let i = i.fetch_add(1, Ordering::SeqCst);
+                println!(
+                    "{}/{} ({:.3}%): {:?}",
+                    i,
+                    n,
+                    i as f32 / n as f32 * 100.0,
+                    d.path()
+                );
             })
-            .for_each(|(f, m, s)| {
-                self.insert_file(f.path(), m, s)
+            .filter_map(|(f, m)| {
+                audio::song_from_file(f.path())
+                    .map(|s| (s, m, f))
+                    .map_err(|e| warn!("Failed to read song from file {:?}", e))
+                    .ok()
+            })
+            .for_each(|(s, m, f)| {
+                cache
+                    .insert_file(f.path(), m, s)
                     .unwrap_or_else(|e| warn!("{}", e))
             });
-    }
-}
 
-fn parse_track_gain(gain: &str) -> Option<f32> {
-    let gain = gain.strip_suffix(" dB")?;
-    let db = gain.parse::<f32>().ok()?;
-    Some(10f32.powf(db / 20.0))
+        cache
+    }
 }

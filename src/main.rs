@@ -11,22 +11,14 @@ use souvlaki::MediaControlEvent;
 
 use crate::{config::Config, tui::tui};
 
+mod audio;
 mod cache;
 mod config;
 mod player;
+mod song;
 mod tui;
 
 pub const UNKNOWN_STRING: &'static str = "<unknown>";
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct Song {
-    title: Option<String>,
-    artist: Option<String>,
-    album: Option<String>,
-    year: Option<String>,
-    track: Option<String>,
-    gain: Option<f32>,
-}
 
 fn main() {
     let config = Arc::new(Config::load("./config.json").expect("Failed to load config"));
@@ -39,25 +31,25 @@ fn main() {
     .expect("Failed to initialize logger");
 
     trace!("loading cache");
-    let cache = Cache::load(&config).unwrap_or_else(|| {
+    let cache = Arc::new(Cache::load(&config).unwrap_or_else(|| {
         warn!("Failed to load cache, rebuilding");
-        let mut cache = Cache::empty();
-        cache.cache_files(&config);
+        let cache = Cache::build_from_config(&config);
         cache
             .save(&config)
             .unwrap_or_else(|e| warn!("Failed to save cache {e:?}"));
         cache
-    });
+    }));
 
     trace!("initializing player");
-    let player = Mutex::new(Player::new().expect("Failed to initialize player"));
-    let player2 = unsafe {
-        std::mem::transmute::<&'_ Mutex<Player<'_>>, &'static Mutex<Player<'static>>>(&player)
-    };
+    let player = Arc::new(Mutex::new(
+        Player::new().expect("Failed to initialize player"),
+    ));
 
     {
-        trace!("attaching media controls: lock");
+        let player = player.clone();
+        trace!("locking player");
         player
+            .clone()
             .lock()
             .unwrap()
             .media_controls
@@ -65,12 +57,12 @@ fn main() {
                 trace!("media control event {:?}", event);
 
                 match event {
-                    MediaControlEvent::Play => player2.lock().unwrap().play(),
-                    MediaControlEvent::Pause => player2.lock().unwrap().pause(),
-                    MediaControlEvent::Toggle => player2.lock().unwrap().play_pause(),
-                    MediaControlEvent::Next => player2.lock().unwrap().skip(),
+                    MediaControlEvent::Play => Player::play(player.clone()),
+                    MediaControlEvent::Pause => Player::pause(player.clone()),
+                    MediaControlEvent::Toggle => Player::play_pause(player.clone()),
+                    MediaControlEvent::Next => Player::skip(player.clone()),
                     MediaControlEvent::Previous => Ok(()),
-                    MediaControlEvent::Stop => player2.lock().unwrap().stop(),
+                    MediaControlEvent::Stop => Player::stop(player.clone()),
                     MediaControlEvent::Seek(_) => todo!(),
                     MediaControlEvent::SeekBy(_, _) => todo!(),
                     MediaControlEvent::SetPosition(_) => todo!(),
@@ -85,9 +77,10 @@ fn main() {
     trace!("attached media controls: unlock");
 
     trace!("running tui");
-    tui(&config, &cache, &player).expect("Failed to run tui");
+    tui(&config, cache, player.clone()).expect("Failed to run tui");
     trace!("tui exited");
 
+    trace!("locking player");
     std::fs::remove_file(player.lock().unwrap().tempfile.path())
         .expect("Failed to remove tempfile");
 

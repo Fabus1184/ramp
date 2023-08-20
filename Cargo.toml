@@ -12,9 +12,15 @@ itertools = "0.11.0"
 log = "0.4.19"
 simplelog = "0.12.1"
 serde = { version = "1.0.181", features = ["derive", "rc"] }
-serde_json = { version = "1.0.104", features = ["unbounded_depth"] }
-serde_stacker = "0.1.10"
+serde_json = { version = "1.0.104" }
 walkdir = "2.3.3"
+tempfile = "3.7.1"
+strsim = "0.10.0"
+image = { version = "0.24.7", default-features = false, features = [
+    "png",
+    "jpeg",
+] }
+bitcode = { version = "0.4.0", features = ["serde"] }
 
 # tui
 crossterm = "0.26.1"
@@ -24,6 +30,6 @@ ratatui = { version = "0.22.0", features = ["all-widgets"] }
 cpal = "0.15.2"
 symphonia = { version = "0.5.3", features = ["mp3"] }
 souvlaki = "0.6.1"
-tempfile = "3.7.1"
-strsim = "0.10.0"
-image = { version = "0.24.7", default-features = false, features = ["png", "jpeg"] }
+float-ord = "0.3.2"
+anyhow = "1.0.75"
+rayon = "1.7.0"

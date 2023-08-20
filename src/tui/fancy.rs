@@ -1,66 +1,109 @@
-use std::{io::Stdout, sync::Mutex};
+use std::{
+    io::Stdout,
+    sync::{Arc, Mutex},
+};
 
 use crossterm::event::Event;
 use image::imageops::FilterType;
+use log::trace;
 use ratatui::{
-    prelude::{Alignment, CrosstermBackend, Rect},
-    style::{Color, Modifier, Style, Stylize},
+    prelude::{Alignment, Constraint, CrosstermBackend, Direction, Layout, Rect},
+    style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Padding, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
 };
 
-use crate::{player::Player, Song, UNKNOWN_STRING};
+use crate::player::Player;
 
 use super::Tui;
 
-pub struct Fancy<'a> {
-    player: &'a Mutex<Player<'a>>,
+pub struct Fancy {
+    player: Arc<Mutex<Player>>,
 }
 
-impl<'a> Fancy<'a> {
-    pub fn new(player: &'a Mutex<Player<'a>>) -> Self {
+impl Fancy {
+    pub fn new(player: Arc<Mutex<Player>>) -> Self {
         Self { player }
     }
 }
 
-impl Tui for Fancy<'_> {
+impl Tui for Fancy {
     fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) {
+        trace!("locking player");
         let player = self.player.lock().expect("Failed to lock player");
-        let text = Paragraph::new(
-            if let Some((Song { title, artist, .. }, _)) = player.current() {
-                Line::from(vec![
-                    Span::from("Now playing: "),
-                    Span::from(title.as_ref().map(|s| s.as_str()).unwrap_or(UNKNOWN_STRING))
-                        .add_modifier(Modifier::BOLD),
-                    Span::from(" by "),
-                    Span::from(
-                        artist
-                            .as_ref()
-                            .map(|s| s.as_str())
-                            .unwrap_or(UNKNOWN_STRING),
-                    )
-                    .add_modifier(Modifier::BOLD),
-                ])
-            } else {
-                Line::from(vec![
-                    Span::from("Nothing playing").add_modifier(Modifier::BOLD)
-                ])
-            },
+
+        let standard_tags = Paragraph::new(
+            player
+                .current()
+                .map(|s| {
+                    s.standard_tags
+                        .iter()
+                        .map(|(k, v)| {
+                            Line::from(vec![
+                                Span::from(format!(" {:?}: ", k)),
+                                Span::styled(format!("{}", v), Style::default().fg(Color::Gray)),
+                            ])
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or(vec![]),
         )
-        .style(Style::default().fg(Color::Yellow))
-        .alignment(Alignment::Center);
+        .block(
+            Block::new()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(" Standard Tags "),
+        );
+
+        let other_tags = Paragraph::new(
+            player
+                .current()
+                .map(|s| {
+                    s.other_tags
+                        .iter()
+                        .map(|(k, v)| {
+                            Line::from(vec![
+                                Span::from(format!(" {}: ", k)),
+                                Span::styled(format!("{}", v), Style::default().fg(Color::Gray)),
+                            ])
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or(vec![]),
+        )
+        .block(
+            Block::new()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(" Other Tags "),
+        );
+
+        let layout = Layout::new()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(50),
+                Constraint::Length(1),
+                Constraint::Percentage(50),
+            ])
+            .split(area);
+
+        let (left, _seperator, right) = (layout[0], layout[1], layout[2]);
+        let layout = Layout::new()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(left);
+        let (top, bottom) = (layout[0], layout[1]);
 
         if let Some(image) = player
             .current()
-            .and_then(|(_, c)| c)
-            .map(|(x, _)| x)
-            .and_then(|x| image::load_from_memory(x).ok())
+            .and_then(|x| x.front_cover())
+            .and_then(|x| image::load_from_memory(&x.data).ok())
         {
             let resized = image.resize(
-                area.width as u32,
-                area.height as u32 - 1,
-                FilterType::Gaussian,
+                (right.width as u32 - 1) * 2,
+                (right.height as u32 - 1) * 2,
+                FilterType::CatmullRom,
             );
 
             let rgb = resized
@@ -71,45 +114,32 @@ impl Tui for Fancy<'_> {
                 .collect::<Vec<_>>();
 
             let mut lines = vec![];
-            for y in 0..resized.height() {
+            for y in (0..resized.height()).step_by(2) {
                 let mut line = vec![];
                 for x in 0..resized.width() {
-                    let [r, g, b] = rgb[(y * resized.width() + x) as usize] else { panic!("Failed to get pixel as RGB") };
+                    let [r1, g1, b1] = rgb[(y * resized.width() + x) as usize] else { panic!("Failed to get pixel as RGB") };
+                    let [r2, g2, b2] = rgb[(y * resized.width() + x + resized.width()) as usize] else { panic!("Failed to get pixel as RGB") };
                     line.push(Span::styled(
-                        "██",
-                        Style::default().fg(Color::Rgb(*r, *g, *b)),
+                        "▀",
+                        Style::default()
+                            .fg(Color::Rgb(*r1, *g1, *b1))
+                            .bg(Color::Rgb(*r2, *g2, *b2)),
                     ));
                 }
                 lines.push(Line::from(line));
             }
 
-            let block = Paragraph::new(lines).alignment(Alignment::Center).block(
+            let image = Paragraph::new(lines).alignment(Alignment::Center).block(
                 Block::new()
-                    .border_type(BorderType::Plain)
-                    .border_style(Style::default().fg(Color::White))
-                    .padding(Padding::new(1, 1, 1, 1)),
+                    .border_type(BorderType::Rounded)
+                    .borders(Borders::ALL)
+                    .title(" Album Art "),
             );
 
-            f.render_widget(
-                block,
-                Rect {
-                    x: area.x,
-                    y: area.y + 1,
-                    width: area.width,
-                    height: area.height - 1,
-                },
-            );
+            f.render_widget(image, right);
+            f.render_widget(standard_tags, top);
+            f.render_widget(other_tags, bottom);
         }
-
-        f.render_widget(
-            text,
-            Rect {
-                x: area.x,
-                y: area.y,
-                width: area.width,
-                height: 1,
-            },
-        );
     }
 
     fn input(&mut self, _event: &Event) {}

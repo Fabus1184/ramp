@@ -1,25 +1,27 @@
-use std::io::Stdout;
+use std::{io::Stdout, sync::Arc};
 
 use crossterm::event::{Event, KeyCode, KeyEvent};
+use float_ord::FloatOrd;
 use itertools::Itertools;
 use ratatui::{
-    prelude::{CrosstermBackend, Rect},
-    widgets::{List, ListItem, Paragraph},
+    prelude::{Constraint, CrosstermBackend, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    widgets::{Paragraph, Table},
     Frame,
 };
-use strsim::levenshtein;
+use strsim::jaro_winkler;
 
-use crate::cache::Cache;
+use crate::{cache::Cache, song::StandardTagKey, UNKNOWN_STRING};
 
-use super::Tui;
+use super::{song_table, Tui};
 
-pub struct Search<'a> {
+pub struct Search {
     keyword: String,
-    cache: &'a Cache,
+    cache: Arc<Cache>,
 }
 
-impl<'a> Search<'a> {
-    pub fn new(cache: &'a Cache) -> Self {
+impl Search {
+    pub fn new(cache: Arc<Cache>) -> Self {
         Self {
             keyword: String::new(),
             cache,
@@ -27,41 +29,59 @@ impl<'a> Search<'a> {
     }
 }
 
-impl<'a> Tui for Search<'a> {
+impl Tui for Search {
     fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) {
-        let input = Paragraph::new(format!("{}_", self.keyword.clone()));
-        let list = List::new(
-            self.cache
-                .songs()
-                .sorted_by_key(|s| {
-                    levenshtein(
-                        self.keyword.as_str(),
-                        s.title.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                    )
-                })
-                .map(|s| ListItem::new(s.title.clone().unwrap_or("".to_string())))
-                .take(50)
-                .collect_vec(),
-        );
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                ratatui::prelude::Constraint::Min(1),
+                ratatui::prelude::Constraint::Length(1),
+            ])
+            .split(area);
 
-        f.render_widget(
-            input,
-            Rect {
-                x: area.x,
-                y: area.y,
-                width: area.width,
-                height: 1,
-            },
-        );
-        f.render_widget(
-            list,
-            Rect {
-                x: area.x,
-                y: area.y + 1,
-                width: area.width,
-                height: area.height - 1,
-            },
-        );
+        let input = Paragraph::new(format!("{}_", self.keyword.clone()));
+        let items = self
+            .cache
+            .songs()
+            .sorted_by_key(|s| {
+                FloatOrd(-jaro_winkler(
+                    self.keyword.as_str(),
+                    s.standard_tags
+                        .get(&StandardTagKey::TrackTitle)
+                        .map(|s| s.to_string())
+                        .unwrap_or(UNKNOWN_STRING.to_string())
+                        .as_str(),
+                ))
+            })
+            .take(area.height as usize)
+            .map(|s| song_table::song_row(s))
+            .collect_vec();
+
+        let table = Table::new(items)
+            .header(
+                song_table::HEADER().style(
+                    Style::default()
+                        .fg(Color::LightBlue)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            )
+            .style(Style::default().fg(Color::Rgb(210, 210, 210)))
+            .highlight_style(
+                Style::default()
+                    .fg(Color::LightYellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("⏯️  ")
+            .column_spacing(4)
+            .widths(&[
+                Constraint::Percentage(5),
+                Constraint::Percentage(15),
+                Constraint::Percentage(40),
+                Constraint::Percentage(30),
+            ]);
+
+        f.render_widget(input, layout[1]);
+        f.render_widget(table, layout[0]);
     }
 
     fn input(&mut self, event: &Event) {
