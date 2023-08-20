@@ -49,7 +49,6 @@ impl Tui for Status {
                 .unwrap_or(UNKNOWN_STRING.to_string());
 
             Line::from(vec![
-                Span::from("Now Playing: "),
                 Span::from(title).add_modifier(ratatui::style::Modifier::BOLD),
                 Span::from(" by "),
                 Span::from(artist).add_modifier(ratatui::style::Modifier::BOLD),
@@ -81,6 +80,7 @@ impl Tui for Status {
                     .fg(ratatui::style::Color::Green)
                     .bg(ratatui::style::Color::Black),
             )
+            .label(Span::from(""))
             .use_unicode(true);
 
         let usage = Paragraph::new(Text::from(vec![Line::from(

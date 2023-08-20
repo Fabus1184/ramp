@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, thread::JoinHandle};
 
-use log::warn;
+use log::{trace, warn};
+use replaygain::ReplayGain;
 use symphonia::core::{
-    audio::AudioBufferRef,
+    audio::{SampleBuffer, SignalSpec},
     codecs::{DecoderOptions, CODEC_TYPE_NULL},
     formats::FormatOptions,
     io::{MediaSourceStream, MediaSourceStreamOptions},
@@ -10,12 +11,15 @@ use symphonia::core::{
     probe::Hint,
 };
 
-use crate::song::Song;
+use crate::song::{Song, StandardTagKey, Value};
 
-pub fn read_audio<P, F>(path: P, mut f: F) -> anyhow::Result<Option<MetadataRevision>>
+pub fn read_audio<P, F>(
+    path: P,
+    mut f: F,
+) -> anyhow::Result<(Option<MetadataRevision>, SignalSpec, JoinHandle<()>)>
 where
     P: AsRef<std::path::Path>,
-    F: FnMut(AudioBufferRef) -> anyhow::Result<()> + Send + 'static,
+    F: FnMut(&[f32]) -> anyhow::Result<()> + Send + 'static,
 {
     let src = std::fs::File::open(path)?;
 
@@ -40,12 +44,15 @@ where
         .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
         .ok_or(anyhow::anyhow!("No audio tracks found"))?;
 
+    trace!("using track {:?}: {:?}", track.id, track);
+
+    let codec_params = track.codec_params.clone();
     let track_id = track.id;
 
     let mut decoder =
         symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
 
-    std::thread::spawn(move || loop {
+    let handle = std::thread::spawn(move || loop {
         match format_reader.next_packet() {
             Ok(packet) => {
                 if packet.track_id() == track_id {
@@ -57,7 +64,16 @@ where
                         }
                     };
 
-                    if f(data).is_err() {
+                    let mut sample_buffer = SampleBuffer::new(
+                        data.capacity() as u64,
+                        SignalSpec::new(
+                            codec_params.sample_rate.unwrap(),
+                            codec_params.channels.unwrap(),
+                        ),
+                    );
+                    sample_buffer.copy_interleaved_ref(data);
+
+                    if f(sample_buffer.samples()).is_err() {
                         break;
                     }
                 }
@@ -76,18 +92,25 @@ where
         };
     });
 
-    Ok(metadata)
+    Ok((
+        metadata,
+        SignalSpec::new(
+            codec_params.sample_rate.unwrap(),
+            codec_params.channels.unwrap(),
+        ),
+        handle,
+    ))
 }
 
 pub fn song_from_file<P>(path: P) -> anyhow::Result<Song>
 where
     P: AsRef<std::path::Path>,
 {
-    let src = std::fs::File::open(path)?;
+    let src = std::fs::File::open(&path)?;
 
     let mss = MediaSourceStream::new(Box::new(src), MediaSourceStreamOptions::default());
     let mut probed = symphonia::default::get_probe().format(
-        &Hint::new(),
+        &Hint::new().with_extension(path.as_ref().extension().unwrap().to_str().unwrap()),
         mss,
         &FormatOptions::default(),
         &MetadataOptions::default(),
@@ -119,7 +142,7 @@ where
 
     let duration = duration.seconds as f32 + duration.frac as f32;
 
-    let (standard_tags, other_tags, visuals) = metadata
+    let (mut standard_tags, other_tags, visuals) = metadata
         .map(|m| {
             let s = m
                 .tags()
@@ -143,6 +166,28 @@ where
             (s, o, v)
         })
         .unwrap_or_default();
+
+    if !standard_tags.contains_key(&StandardTagKey::ReplayGainTrackGain) {
+        println!("No ReplayGainTrackGain found, calculating...");
+
+        let mut rg = ReplayGain::new(48_000).expect("Failed to create ReplayGain");
+
+        let rg_ref =
+            unsafe { std::mem::transmute::<&'_ mut ReplayGain, &'static mut ReplayGain>(&mut rg) };
+        let (_, _, handle) = read_audio(&path, |data| {
+            rg_ref.process_samples(data);
+
+            Ok(())
+        })?;
+        handle.join().expect("Failed to join thread");
+
+        let (gain, _peak) = rg.finish();
+
+        standard_tags.insert(
+            StandardTagKey::ReplayGainTrackGain,
+            Value::Float(gain as f64),
+        );
+    }
 
     Ok(Song {
         standard_tags,

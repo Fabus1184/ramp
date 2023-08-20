@@ -9,7 +9,7 @@ use itertools::Itertools;
 use log::trace;
 use ratatui::{
     prelude::{Constraint, CrosstermBackend, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Modifier, Style, Stylize},
     widgets::{Table, TableState},
     Frame,
 };
@@ -58,13 +58,11 @@ impl Tui for Files {
 
         let table = Table::new(items)
             .header(
-                song_table::HEADER().style(
-                    Style::default()
-                        .fg(Color::LightBlue)
-                        .add_modifier(Modifier::BOLD),
-                ),
+                song_table::HEADER()
+                    .fg(Color::LightBlue)
+                    .add_modifier(Modifier::BOLD),
             )
-            .style(Style::default().fg(Color::Rgb(210, 210, 210)))
+            .fg(Color::Rgb(210, 210, 210))
             .highlight_style(
                 Style::default()
                     .fg(Color::LightYellow)

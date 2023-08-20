@@ -5,7 +5,8 @@ use float_ord::FloatOrd;
 use itertools::Itertools;
 use ratatui::{
     prelude::{Constraint, CrosstermBackend, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Modifier, Style, Stylize},
+    text::{Line, Span},
     widgets::{Paragraph, Table},
     Frame,
 };
@@ -39,7 +40,14 @@ impl Tui for Search {
             ])
             .split(area);
 
-        let input = Paragraph::new(format!("{}_", self.keyword.clone()));
+        let input = Paragraph::new(Line::from(vec![
+            Span::from("Search: ")
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+            Span::from(self.keyword.clone()).add_modifier(Modifier::ITALIC),
+            Span::from("_").add_modifier(Modifier::SLOW_BLINK),
+        ]));
+
         let items = self
             .cache
             .songs()
@@ -59,13 +67,11 @@ impl Tui for Search {
 
         let table = Table::new(items)
             .header(
-                song_table::HEADER().style(
-                    Style::default()
-                        .fg(Color::LightBlue)
-                        .add_modifier(Modifier::BOLD),
-                ),
+                song_table::HEADER()
+                    .fg(Color::LightBlue)
+                    .add_modifier(Modifier::BOLD),
             )
-            .style(Style::default().fg(Color::Rgb(210, 210, 210)))
+            .fg(Color::Rgb(210, 210, 210))
             .highlight_style(
                 Style::default()
                     .fg(Color::LightYellow)

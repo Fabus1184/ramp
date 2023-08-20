@@ -4,7 +4,7 @@ use crossterm::event::Event;
 use log::trace;
 use ratatui::{
     prelude::Constraint,
-    style::{Color, Modifier, Style},
+    style::{Color, Modifier, Style, Stylize},
     widgets::Table,
 };
 
@@ -40,7 +40,7 @@ impl Tui for Queue {
 
         let table = Table::new(items.clone())
             .header(song_table::HEADER())
-            .style(Style::default().fg(Color::Rgb(210, 210, 210)))
+            .fg(Color::Rgb(210, 210, 210))
             .highlight_style(
                 Style::default()
                     .fg(Color::LightYellow)

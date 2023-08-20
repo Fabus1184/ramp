@@ -8,7 +8,7 @@ use image::imageops::FilterType;
 use log::trace;
 use ratatui::{
     prelude::{Alignment, Constraint, CrosstermBackend, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Stylize},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
@@ -42,7 +42,7 @@ impl Tui for Fancy {
                         .map(|(k, v)| {
                             Line::from(vec![
                                 Span::from(format!(" {:?}: ", k)),
-                                Span::styled(format!("{}", v), Style::default().fg(Color::Gray)),
+                                Span::from(format!("{}", v)).fg(Color::Gray),
                             ])
                         })
                         .collect::<Vec<_>>()
@@ -65,7 +65,7 @@ impl Tui for Fancy {
                         .map(|(k, v)| {
                             Line::from(vec![
                                 Span::from(format!(" {}: ", k)),
-                                Span::styled(format!("{}", v), Style::default().fg(Color::Gray)),
+                                Span::from(format!("{}", v)).fg(Color::Gray),
                             ])
                         })
                         .collect::<Vec<_>>()
@@ -119,12 +119,11 @@ impl Tui for Fancy {
                 for x in 0..resized.width() {
                     let [r1, g1, b1] = rgb[(y * resized.width() + x) as usize] else { panic!("Failed to get pixel as RGB") };
                     let [r2, g2, b2] = rgb[(y * resized.width() + x + resized.width()) as usize] else { panic!("Failed to get pixel as RGB") };
-                    line.push(Span::styled(
-                        "▀",
-                        Style::default()
+                    line.push(
+                        Span::from("▀")
                             .fg(Color::Rgb(*r1, *g1, *b1))
                             .bg(Color::Rgb(*r2, *g2, *b2)),
-                    ));
+                    );
                 }
                 lines.push(Line::from(line));
             }

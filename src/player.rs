@@ -4,7 +4,7 @@ use cpal::{
 };
 use log::{trace, warn};
 use souvlaki::{MediaControls, MediaMetadata, MediaPlayback, PlatformConfig};
-use symphonia::core::audio::{Channels, SampleBuffer, SignalSpec};
+use symphonia::core::audio::SignalSpec;
 use tempfile::NamedTempFile;
 
 use std::{
@@ -28,9 +28,8 @@ enum StreamCommand {
 pub struct Player {
     playing: bool,
     current: Option<(Song, PathBuf, SyncSender<StreamCommand>, Duration)>,
-    next: VecDeque<(Song, PathBuf, Receiver<SampleBuffer<f32>>)>,
+    next: VecDeque<(Song, PathBuf, SignalSpec, Receiver<Vec<f32>>)>,
     device: Device,
-    stream_config: StreamConfig,
     pub media_controls: MediaControls,
     pub tempfile: NamedTempFile,
 }
@@ -38,11 +37,6 @@ pub struct Player {
 impl Player {
     pub fn new() -> anyhow::Result<Player> {
         let device = cpal::default_host().default_output_device().ok_or(anyhow::anyhow!("Failed to get default output device"))?;
-
-        let stream_config = device
-            .default_output_config()
-            ?
-            .into();
 
         let media_controls = MediaControls::new(PlatformConfig {
             display_name: "rcmp",
@@ -56,7 +50,6 @@ impl Player {
             current: None,
             next: VecDeque::new(),
             device,
-            stream_config,
             media_controls,
             tempfile: NamedTempFile::new().expect("Failed to create tempfile"),
         })
@@ -142,7 +135,7 @@ impl Player {
 
             trace!("locking player");
             let mut x = player.lock().unwrap();
-            if let Some((song, path, rx)) = x.next.pop_front() {
+            if let Some((song, path, signal_spec, rx)) = x.next.pop_front() {
                 let gain_factor = song
                     .standard_tags
                     .get(&StandardTagKey::ReplayGainTrackGain)
@@ -158,7 +151,11 @@ impl Player {
 
                 let (ctx, crx) = std::sync::mpsc::sync_channel::<StreamCommand>(0);
 
-                let stream_config = x.stream_config.clone();
+                let stream_config = StreamConfig {
+                    channels: signal_spec.channels.count() as u16,
+                    sample_rate: cpal::SampleRate(signal_spec.rate),
+                    buffer_size: cpal::BufferSize::Default
+                };
                 trace!("play: stream_config: {:?}", stream_config);
 
                 let player2 = player.clone();
@@ -174,7 +171,7 @@ impl Player {
                                     while buf.len() < data.len() {
                                         match rx.recv() {
                                             Ok(s) => buf.extend(
-                                                s.samples().into_iter().map(|x| x * gain_factor),
+                                                s.into_iter().map(|x| x * gain_factor),
                                             ),
                                             Err(e) => {
                                                 warn!("Failed to receive sample, sender disconnected {:?}",e);
@@ -291,28 +288,18 @@ impl Player {
             .chain(std::iter::once(file_name))
             .fold(PathBuf::new(), |acc, p| acc.join(p));
 
-        let (tx, rx) = std::sync::mpsc::sync_channel::<SampleBuffer<f32>>(512);
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(512);
 
-        audio::read_audio(&path, move |data| {
-            trace!("read_audio: got {} frames", data.frames());
-            let mut b = SampleBuffer::new(
-                data.capacity() as u64,
-                SignalSpec::new(
-                    48_000,
-                    Channels::FRONT_LEFT.union(Channels::FRONT_RIGHT),
-                ),
-            );
-            b.copy_interleaved_ref(data);
-            tx.send(b)?;
-
+        let (_metadata, signal_spec, _handle) = audio::read_audio(&path, move |data| {
+            trace!("read_audio: got {} frames", data.len());
+            tx.send(data.to_vec())?;
             Ok(())
         })?;
-
 
         let is_none = {
             trace!("locking player");
             let mut player = player.lock().unwrap();
-            player.next.push_back((song, path, rx));
+            player.next.push_back((song, path, signal_spec, rx));
             player.current.is_none()
         };
 
@@ -355,6 +342,6 @@ impl Player {
     }
 
     pub fn nexts(&self) -> impl Iterator<Item = &Song> {
-        self.next.iter().map(|(s, _, _)| s)
+        self.next.iter().map(|(s, _, _, _)| s)
     }
 }
