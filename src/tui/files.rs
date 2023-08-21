@@ -81,11 +81,13 @@ impl Tui for Files {
         let mut table_state = TableState::default()
             .with_selected(Some((selected).min(len - 1).max(0) as usize))
             .with_offset({
-                if selected > f.size().height as usize / 2 {
-                    if selected < len - f.size().height as usize / 2 {
-                        selected - f.size().height as usize / 2
+                if len <= area.height as usize {
+                    0
+                } else if selected > 1 + area.height as usize / 2 {
+                    if selected < len + 1 - area.height as usize / 2 {
+                        selected - 1 - area.height as usize / 2
                     } else {
-                        len - f.size().height as usize
+                        len + 1 - area.height as usize
                     }
                 } else {
                     0
@@ -171,7 +173,7 @@ fn items<'a>(
 ) -> impl Iterator<Item = (&'a String, &'a Cache)> {
     match cache.get(path).expect("Failed to get cache") {
         Cache::File { .. } => panic!("File returned from Cache::get"),
-        Cache::Directory { ref children } => {
+        Cache::Directory { ref children, .. } => {
             children
                 .iter()
                 .sorted_by(|(f1, c1), (f2, c2)| match (c1, c2) {

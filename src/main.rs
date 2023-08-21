@@ -31,14 +31,21 @@ fn main() {
     .expect("Failed to initialize logger");
 
     trace!("loading cache");
-    let cache = Arc::new(Cache::load(&config).unwrap_or_else(|| {
-        warn!("Failed to load cache, rebuilding");
-        let cache = Cache::build_from_config(&config);
-        cache
-            .save(&config)
-            .unwrap_or_else(|e| warn!("Failed to save cache {e:?}"));
-        cache
-    }));
+    let cache = Arc::new(
+        Cache::load(&config)
+            .and_then(|mut c| {
+                c.update(&config);
+                Some(c)
+            })
+            .unwrap_or_else(|| {
+                warn!("Failed to load cache, rebuilding");
+                let cache = Cache::build_from_config(&config);
+                cache
+                    .save(&config)
+                    .unwrap_or_else(|e| warn!("Failed to save cache {e:?}"));
+                cache
+            }),
+    );
 
     trace!("initializing player");
     let player = Arc::new(Mutex::new(

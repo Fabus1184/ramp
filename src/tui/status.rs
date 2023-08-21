@@ -6,9 +6,9 @@ use std::{
 use itertools::Itertools;
 use ratatui::{
     prelude::{Constraint, CrosstermBackend, Layout, Margin, Rect},
-    style::Stylize,
+    style::{Color, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Gauge, Paragraph},
+    widgets::{LineGauge, Paragraph},
     Frame,
 };
 
@@ -49,39 +49,42 @@ impl Tui for Status {
                 .unwrap_or(UNKNOWN_STRING.to_string());
 
             Line::from(vec![
-                Span::from(title).add_modifier(ratatui::style::Modifier::BOLD),
-                Span::from(" by "),
-                Span::from(artist).add_modifier(ratatui::style::Modifier::BOLD),
+                Span::from(" "),
+                Span::from(artist)
+                    .fg(Color::LightYellow)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+                Span::from(" - ").fg(Color::White),
+                Span::from(title)
+                    .fg(Color::LightYellow)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
                 Span::from(format!(
                     " ({:01.0}:{:02.0})",
                     (song.duration / 60.0).floor(),
                     song.duration % 60.0
-                )),
+                ))
+                .fg(Color::LightGreen),
+                Span::from(" "),
             ])
         } else {
             Line::from(vec![
-                Span::from("Nothing playing").add_modifier(ratatui::style::Modifier::BOLD)
+                Span::from(" - ").add_modifier(ratatui::style::Modifier::BOLD)
             ])
         })
         .alignment(ratatui::prelude::Alignment::Center);
 
         let player = self.player.lock().unwrap();
-        let percent = if let Some(song) = player.current() {
-            (100.0 * player.current_time().unwrap().as_secs_f32() / song.duration).floor() as u16
+        let ratio = if let Some(song) = player.current() {
+            player.current_time().unwrap().as_secs_f32() / song.duration
         } else {
-            0
+            0.0
         }
-        .clamp(0, 100);
+        .clamp(0.0, 1.0);
 
-        let progress = Gauge::default()
-            .percent(percent)
-            .gauge_style(
-                ratatui::style::Style::default()
-                    .fg(ratatui::style::Color::Green)
-                    .bg(ratatui::style::Color::Black),
-            )
-            .label(Span::from(""))
-            .use_unicode(true);
+        let progress = LineGauge::default()
+            .ratio(ratio as f64)
+            .line_set(ratatui::symbols::line::DOUBLE)
+            .label("")
+            .gauge_style(Style::default().fg(Color::LightBlue).bg(Color::DarkGray));
 
         let usage = Paragraph::new(Text::from(vec![Line::from(
             vec![

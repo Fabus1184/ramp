@@ -7,15 +7,21 @@ use std::{
     time::SystemTime,
 };
 
-use log::warn;
+use log::{info, trace, warn};
 
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use walkdir::WalkDir;
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub enum Cache {
-    File { modified: SystemTime, song: Song },
-    Directory { children: HashMap<String, Cache> },
+    File {
+        modified: SystemTime,
+        song: Song,
+    },
+    Directory {
+        modified: SystemTime,
+        children: HashMap<String, Cache>,
+    },
 }
 
 impl Clone for Cache {
@@ -27,6 +33,7 @@ impl Clone for Cache {
 impl Cache {
     pub fn empty() -> Self {
         Cache::Directory {
+            modified: SystemTime::now(),
             children: HashMap::new(),
         }
     }
@@ -34,14 +41,16 @@ impl Cache {
     pub fn songs(&self) -> Box<dyn Iterator<Item = &Song> + '_> {
         match self {
             Cache::File { song, .. } => Box::new(std::iter::once(song)),
-            Cache::Directory { children } => Box::new(children.values().flat_map(|c| c.songs())),
+            Cache::Directory { children, .. } => {
+                Box::new(children.values().flat_map(|c| c.songs()))
+            }
         }
     }
 
     fn insert_file(&mut self, path: &Path, meta: Metadata, song: Song) -> Result<(), String> {
         match self {
             Cache::File { .. } => panic!("Cache::insert_file called on Cache::File"),
-            Cache::Directory { children } => {
+            Cache::Directory { children, .. } => {
                 if path.components().count() == 1 {
                     let name = path
                         .file_name()
@@ -52,7 +61,7 @@ impl Cache {
 
                     let modified = meta.modified().unwrap_or_else(|e| {
                         warn!("Failed to read modified time {:?}", e);
-                        SystemTime::UNIX_EPOCH
+                        SystemTime::now()
                     });
 
                     children.insert(name, Cache::File { modified, song });
@@ -80,6 +89,7 @@ impl Cache {
                     children
                         .entry(next_dir)
                         .or_insert_with(|| Cache::Directory {
+                            modified: SystemTime::UNIX_EPOCH,
                             children: HashMap::new(),
                         })
                         .insert_file(&next_path, meta, song)
@@ -111,6 +121,60 @@ impl Cache {
         Ok(())
     }
 
+    pub fn update(&mut self, config: &Config) {
+        match self {
+            Cache::File { .. } => panic!("Cache::update called on Cache::File"),
+            d @ Cache::Directory { .. } => d._update(PathBuf::new(), config),
+        }
+    }
+
+    fn _update(&mut self, path: PathBuf, config: &Config) {
+        match self {
+            Cache::File { modified, .. } => {
+                if let Ok(modified2) = std::fs::File::open(&path)
+                    .and_then(|f| f.metadata())
+                    .and_then(|f| f.modified())
+                {
+                    if modified2 > *modified {
+                        trace!("Updating {:?}", path);
+                        *self = Cache::build_from_path(
+                            &path,
+                            &config.extensions,
+                            1,
+                            &AtomicUsize::new(0),
+                        );
+                    }
+                };
+            }
+            Cache::Directory { children, modified } => {
+                if let Ok(modified2) = std::fs::File::open(&path)
+                    .and_then(|f| f.metadata())
+                    .and_then(|f| f.modified())
+                {
+                    if modified2 > *modified {
+                        trace!("Updating {:?}", path);
+
+                        children.retain(|k, _| {
+                            let p = path.join(k);
+                            if !p.exists() {
+                                info!("Removing {:?}", p);
+                                false
+                            } else {
+                                true
+                            }
+                        });
+
+                        children.iter_mut().for_each(|(k, v)| {
+                            let mut p = path.clone();
+                            p.push(k);
+                            v._update(p, config);
+                        });
+                    }
+                };
+            }
+        }
+    }
+
     pub fn get(&self, path: &Vec<String>) -> Option<&Cache> {
         if path.is_empty() {
             Some(self)
@@ -120,14 +184,23 @@ impl Cache {
 
             match self {
                 Cache::File { .. } => panic!("Cache::get called on Cache::File"),
-                Cache::Directory { children } => children.get(next)?.get(&rest),
+                Cache::Directory { children, .. } => children.get(next)?.get(&rest),
             }
         }
     }
 
     fn merge_into(&mut self, cache: Cache) {
         match (self, cache) {
-            (Cache::Directory { children: c1 }, Cache::Directory { children: c2 }) => {
+            (
+                Cache::Directory {
+                    children: c1,
+                    modified: _m1,
+                },
+                Cache::Directory {
+                    children: c2,
+                    modified: _m2,
+                },
+            ) => {
                 for (k, v) in c2 {
                     if let Some(c) = c1.get_mut(&k) {
                         c.merge_into(v);

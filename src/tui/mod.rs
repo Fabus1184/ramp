@@ -58,7 +58,7 @@ pub fn tui<'a>(
                 "Search 🔎", /* idk, whatever */
                 Box::new(Search::new(cache.clone())),
             ),
-            ("Fancy shit ✨ ", Box::new(Fancy::new(player.clone()))),
+            ("Fancy stuff ✨ ", Box::new(Fancy::new(player.clone()))),
         ],
         &running,
     );
