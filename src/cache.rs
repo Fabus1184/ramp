@@ -1,27 +1,18 @@
 use crate::{audio, config::Config, song::Song};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs::Metadata,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
-    time::SystemTime,
 };
 
-use log::{info, trace, warn};
+use log::warn;
 
-use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use walkdir::WalkDir;
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub enum Cache {
-    File {
-        modified: SystemTime,
-        song: Song,
-    },
-    Directory {
-        modified: SystemTime,
-        children: HashMap<String, Cache>,
-    },
+    File { song: Song },
+    Directory { children: HashMap<String, Cache> },
 }
 
 impl Clone for Cache {
@@ -31,13 +22,6 @@ impl Clone for Cache {
 }
 
 impl Cache {
-    pub fn empty() -> Self {
-        Cache::Directory {
-            modified: SystemTime::now(),
-            children: HashMap::new(),
-        }
-    }
-
     pub fn songs(&self) -> Box<dyn Iterator<Item = &Song> + '_> {
         match self {
             Cache::File { song, .. } => Box::new(std::iter::once(song)),
@@ -59,12 +43,7 @@ impl Cache {
                         .ok_or_else(|| format!("Failed to convert file name to string {:?}", path))?
                         .to_string();
 
-                    let modified = meta.modified().unwrap_or_else(|e| {
-                        warn!("Failed to read modified time {:?}", e);
-                        SystemTime::now()
-                    });
-
-                    children.insert(name, Cache::File { modified, song });
+                    children.insert(name, Cache::File { song });
 
                     Ok(())
                 } else {
@@ -89,7 +68,6 @@ impl Cache {
                     children
                         .entry(next_dir)
                         .or_insert_with(|| Cache::Directory {
-                            modified: SystemTime::UNIX_EPOCH,
                             children: HashMap::new(),
                         })
                         .insert_file(&next_path, meta, song)
@@ -98,81 +76,17 @@ impl Cache {
         }
     }
 
-    pub fn load(config: &Config) -> Option<Self> {
-        let s = std::fs::read(&config.cache_path)
-            .map_err(|e| {
-                warn!("Failed to read cache file {:?}", e);
-            })
-            .ok()?;
-
-        bitcode::deserialize(&s)
-            .map_err(|e| {
-                warn!("Failed to deserialize cache file {:?}", e);
-            })
-            .ok()
+    pub fn load(config: &Config) -> anyhow::Result<(Self, Config)> {
+        let s = std::fs::read(&config.cache_path)?;
+        let config = bitcode::deserialize(&s)?;
+        Ok(config)
     }
 
-    pub fn save(&self, config: &Config) -> Result<(), String> {
-        let s =
-            bitcode::serialize(self).map_err(|e| format!("Failed to serialize cache {:?}", e))?;
-        std::fs::write(&config.cache_path, s)
-            .map_err(|e| format!("Failed to write cache file {:?}", e))?;
+    pub fn save(&self, config: &Config) -> anyhow::Result<()> {
+        let s = bitcode::serialize(&(self, config))?;
+        std::fs::write(&config.cache_path, s)?;
 
         Ok(())
-    }
-
-    pub fn update(&mut self, config: &Config) {
-        match self {
-            Cache::File { .. } => panic!("Cache::update called on Cache::File"),
-            d @ Cache::Directory { .. } => d._update(PathBuf::new(), config),
-        }
-    }
-
-    fn _update(&mut self, path: PathBuf, config: &Config) {
-        match self {
-            Cache::File { modified, .. } => {
-                if let Ok(modified2) = std::fs::File::open(&path)
-                    .and_then(|f| f.metadata())
-                    .and_then(|f| f.modified())
-                {
-                    if modified2 > *modified {
-                        trace!("Updating {:?}", path);
-                        *self = Cache::build_from_path(
-                            &path,
-                            &config.extensions,
-                            1,
-                            &AtomicUsize::new(0),
-                        );
-                    }
-                };
-            }
-            Cache::Directory { children, modified } => {
-                if let Ok(modified2) = std::fs::File::open(&path)
-                    .and_then(|f| f.metadata())
-                    .and_then(|f| f.modified())
-                {
-                    if modified2 > *modified {
-                        trace!("Updating {:?}", path);
-
-                        children.retain(|k, _| {
-                            let p = path.join(k);
-                            if !p.exists() {
-                                info!("Removing {:?}", p);
-                                false
-                            } else {
-                                true
-                            }
-                        });
-
-                        children.iter_mut().for_each(|(k, v)| {
-                            let mut p = path.clone();
-                            p.push(k);
-                            v._update(p, config);
-                        });
-                    }
-                };
-            }
-        }
     }
 
     pub fn get(&self, path: &Vec<String>) -> Option<&Cache> {
@@ -189,99 +103,40 @@ impl Cache {
         }
     }
 
-    fn merge_into(&mut self, cache: Cache) {
-        match (self, cache) {
-            (
-                Cache::Directory {
-                    children: c1,
-                    modified: _m1,
-                },
-                Cache::Directory {
-                    children: c2,
-                    modified: _m2,
-                },
-            ) => {
-                for (k, v) in c2 {
-                    if let Some(c) = c1.get_mut(&k) {
-                        c.merge_into(v);
-                    } else {
-                        c1.insert(k, v);
-                    }
-                }
-            }
-            (a, b) => panic!("Cache::merge called on {:?} and {:?}", a, b),
-        }
-    }
-
     pub fn build_from_config(config: &Config) -> Self {
-        let n = config
-            .search_directories
-            .iter()
-            .flat_map(|d| WalkDir::new(d))
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-            .count();
-
-        let i = AtomicUsize::new(0);
-
+        let mut cache = Cache::Directory {
+            children: HashMap::new(),
+        };
         config
             .search_directories
             .iter()
             .flat_map(|d| WalkDir::new(d))
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_dir())
-            .collect::<Vec<_>>()
-            .par_iter()
-            .map(|p| Cache::build_from_path(p.path(), &config.extensions, n, &i))
-            .reduce(Cache::empty, |mut a, b| {
-                a.merge_into(b);
-                a
+            .filter(|e| e.file_type().is_file())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|e| config.extensions.contains(e.to_str().unwrap_or("")))
+                    .unwrap_or(false)
             })
-    }
-
-    fn build_from_path<P>(path: P, extensions: &HashSet<String>, n: usize, i: &AtomicUsize) -> Cache
-    where
-        P: AsRef<std::path::Path>,
-    {
-        let mut cache = Cache::empty();
-
-        WalkDir::new(path)
-            .into_iter()
-            .flat_map(|d| (d.map_err(|e| warn!("Failed to read file {:?}", e))))
-            .filter(|d| d.file_type().is_file())
-            .filter_map(|d| {
-                d.metadata()
-                    .map(|m| (d, m))
+            .filter_map(|e| {
+                e.metadata()
+                    .map(|m| (e, m))
                     .map_err(|e| warn!("Failed to read metadata {:?}", e))
                     .ok()
             })
-            .filter(|(d, _)| {
-                d.path()
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .map(|e| extensions.contains(e))
-                    .unwrap_or(false)
-            })
-            .inspect(|(d, _)| {
-                let i = i.fetch_add(1, Ordering::SeqCst);
-                println!(
-                    "{}/{} ({:.3}%): {:?}",
-                    i,
-                    n,
-                    i as f32 / n as f32 * 100.0,
-                    d.path()
-                );
-            })
-            .filter_map(|(f, m)| {
-                audio::song_from_file(f.path())
-                    .map(|s| (s, m, f))
-                    .map_err(|e| warn!("Failed to read song from file {:?}", e))
+            .filter_map(|(e, m)| {
+                audio::song_from_file(e.path())
+                    .map(|s| (e.path().to_path_buf(), m, s))
+                    .map_err(|e| {
+                        warn!("Failed to read song from {:?}: {}", e, e);
+                    })
                     .ok()
             })
-            .for_each(|(s, m, f)| {
+            .for_each(|(p, m, s)| {
                 cache
-                    .insert_file(f.path(), m, s)
-                    .unwrap_or_else(|e| warn!("{}", e))
+                    .insert_file(&p, m, s)
+                    .unwrap_or_else(|e| warn!("Failed to insert file {:?}: {}", p, e));
             });
 
         cache

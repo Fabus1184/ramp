@@ -12,9 +12,9 @@ use ratatui::{
 };
 use strsim::jaro_winkler;
 
-use crate::{cache::Cache, song::StandardTagKey, UNKNOWN_STRING};
+use crate::{cache::Cache, song::StandardTagKey};
 
-use super::{song_table, Tui};
+use super::{song_table, Tui, UNKNOWN_STRING};
 
 pub struct Search {
     keyword: String,
@@ -53,11 +53,12 @@ impl Tui for Search {
             .songs()
             .sorted_by_key(|s| {
                 FloatOrd(-jaro_winkler(
-                    self.keyword.as_str(),
+                    self.keyword.to_lowercase().as_str(),
                     s.standard_tags
                         .get(&StandardTagKey::TrackTitle)
                         .map(|s| s.to_string())
                         .unwrap_or(UNKNOWN_STRING.to_string())
+                        .to_lowercase()
                         .as_str(),
                 ))
             })

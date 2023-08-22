@@ -1,6 +1,5 @@
 mod fancy;
 mod files;
-mod log;
 mod queue;
 mod search;
 mod song_table;
@@ -18,7 +17,6 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 
-use ::log::trace;
 use ratatui::{
     backend::CrosstermBackend,
     prelude::{Constraint, Direction, Layout, Rect},
@@ -29,13 +27,15 @@ use crate::{cache::Cache, config::Config, player::Player};
 
 use self::{fancy::Fancy, files::Files, queue::Queue, search::Search, status::Status, tabs::Tabs};
 
+pub const UNKNOWN_STRING: &'static str = "<unknown>";
+
 pub trait Tui {
     fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>);
     fn input(&mut self, event: &Event);
 }
 
 pub fn tui<'a>(
-    _config: &'a Config,
+    _config: Arc<Config>,
     cache: Arc<Cache>,
     player: Arc<Mutex<Player>>,
 ) -> std::io::Result<()> {
@@ -80,7 +80,6 @@ pub fn tui<'a>(
             tabs.input(&event::read()?);
         }
 
-        trace!("locking player");
         if !*running.lock().unwrap() {
             break;
         }

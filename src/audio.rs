@@ -1,6 +1,6 @@
 use std::{collections::HashMap, thread::JoinHandle};
 
-use log::{trace, warn};
+use log::warn;
 use replaygain::ReplayGain;
 use symphonia::core::{
     audio::{SampleBuffer, SignalSpec},
@@ -43,8 +43,6 @@ where
         .into_iter()
         .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
         .ok_or(anyhow::anyhow!("No audio tracks found"))?;
-
-    trace!("using track {:?}: {:?}", track.id, track);
 
     let codec_params = track.codec_params.clone();
     let track_id = track.id;
@@ -112,7 +110,11 @@ where
     let mut probed = symphonia::default::get_probe().format(
         &Hint::new().with_extension(path.as_ref().extension().unwrap().to_str().unwrap()),
         mss,
-        &FormatOptions::default(),
+        &FormatOptions {
+            prebuild_seek_index: false,
+            seek_index_fill_rate: 0,
+            enable_gapless: true,
+        },
         &MetadataOptions::default(),
     )?;
 
@@ -142,7 +144,7 @@ where
 
     let duration = duration.seconds as f32 + duration.frac as f32;
 
-    let (mut standard_tags, other_tags, visuals) = metadata
+    let (mut standard_tags, other_tags) = metadata
         .map(|m| {
             let s = m
                 .tags()
@@ -157,20 +159,18 @@ where
                 .map(|t| (t.key.clone(), t.value.clone().into()))
                 .collect::<HashMap<_, _>>();
 
-            let v = m
-                .visuals()
-                .into_iter()
-                .map(|x| x.clone().into())
-                .collect::<Vec<_>>();
-
-            (s, o, v)
+            (s, o)
         })
         .unwrap_or_default();
 
     if !standard_tags.contains_key(&StandardTagKey::ReplayGainTrackGain) {
-        println!("No ReplayGainTrackGain found, calculating...");
-
-        let mut rg = ReplayGain::new(48_000).expect("Failed to create ReplayGain");
+        let mut rg = ReplayGain::new(
+            track
+                .codec_params
+                .sample_rate
+                .expect("No sample rate found") as usize,
+        )
+        .expect("Failed to create ReplayGain");
 
         let rg_ref =
             unsafe { std::mem::transmute::<&'_ mut ReplayGain, &'static mut ReplayGain>(&mut rg) };
@@ -192,7 +192,6 @@ where
     Ok(Song {
         standard_tags,
         other_tags,
-        visuals,
         duration,
     })
 }

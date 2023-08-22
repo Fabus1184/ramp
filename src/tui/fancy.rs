@@ -47,7 +47,7 @@ impl Tui for Fancy {
                         })
                         .collect::<Vec<_>>()
                 })
-                .unwrap_or(vec![]),
+                .unwrap_or(vec![Line::from(vec![Span::from("no tags")])]),
         )
         .block(
             Block::new()
@@ -70,7 +70,7 @@ impl Tui for Fancy {
                         })
                         .collect::<Vec<_>>()
                 })
-                .unwrap_or(vec![]),
+                .unwrap_or(vec![Line::from(vec![Span::from("no tags")])]),
         )
         .block(
             Block::new()
@@ -96,9 +96,8 @@ impl Tui for Fancy {
         let (top, bottom) = (layout[0], layout[1]);
 
         if let Some(image) = player
-            .current()
-            .and_then(|x| x.front_cover())
-            .and_then(|x| image::load_from_memory(&x.data).ok())
+            .current_cover()
+            .and_then(|x| image::load_from_memory(x).ok())
         {
             let resized = image.resize(
                 (right.width as u32 - 1) * 2,

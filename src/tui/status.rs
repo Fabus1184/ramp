@@ -4,6 +4,7 @@ use std::{
 };
 
 use itertools::Itertools;
+use log::trace;
 use ratatui::{
     prelude::{Constraint, CrosstermBackend, Layout, Margin, Rect},
     style::{Color, Style, Stylize},
@@ -12,9 +13,9 @@ use ratatui::{
     Frame,
 };
 
-use crate::{player::Player, song::StandardTagKey, UNKNOWN_STRING};
+use crate::{player::Player, song::StandardTagKey};
 
-use super::Tui;
+use super::{Tui, UNKNOWN_STRING};
 
 pub struct Status {
     player: Arc<Mutex<Player>>,
@@ -36,6 +37,7 @@ impl Tui for Status {
                 horizontal: 1,
             }));
 
+        trace!("locking player");
         let playing = Paragraph::new(if let Some(song) = self.player.lock().unwrap().current() {
             let title = song
                 .standard_tags
@@ -72,6 +74,7 @@ impl Tui for Status {
         })
         .alignment(ratatui::prelude::Alignment::Center);
 
+        trace!("locking player");
         let player = self.player.lock().unwrap();
         let ratio = if let Some(song) = player.current() {
             player.current_time().unwrap().as_secs_f32() / song.duration

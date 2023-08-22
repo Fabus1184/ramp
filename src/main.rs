@@ -7,7 +7,6 @@ use cache::Cache;
 use log::{trace, warn, LevelFilter};
 use player::Player;
 use simplelog::WriteLogger;
-use souvlaki::MediaControlEvent;
 
 use crate::{config::Config, tui::tui};
 
@@ -18,78 +17,91 @@ mod player;
 mod song;
 mod tui;
 
-pub const UNKNOWN_STRING: &'static str = "<unknown>";
-
 fn main() {
-    let config = Arc::new(Config::load("./config.json").expect("Failed to load config"));
+    let config_dir = dirs::config_dir()
+        .expect("Unable to find config directory")
+        .join("ramp");
+
+    if !config_dir.exists() {
+        std::fs::create_dir_all(&config_dir).unwrap_or_else(|e| {
+            eprintln!("Failed to create config directory: {e:?}");
+        });
+    }
+
+    let config = Arc::new(
+        Config::load(&config_dir.join("config.json")).unwrap_or_else(|e| {
+            eprintln!("Failed to load config, using default: {e:?}");
+            let config = Config::default_from_config_dir(&config_dir);
+            config
+                .save(&config_dir.join("config.json"))
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to save config: {e:?}");
+                });
+            config
+        }),
+    );
 
     let _logger = WriteLogger::init(
+        //#[cfg(debug_assertions)]
         LevelFilter::Trace,
-        simplelog::Config::default(),
+        //#[cfg(not(debug_assertions))]
+        //LevelFilter::Info,
+        simplelog::ConfigBuilder::new()
+            .set_target_level(LevelFilter::Error)
+            .set_location_level(LevelFilter::Error)
+            .set_thread_level(LevelFilter::Error)
+            .add_filter_ignore_str("symphonia")
+            .build(),
         File::create(&config.log_path).expect("Failed to create log file"),
     )
-    .expect("Failed to initialize logger");
+    .unwrap_or_else(|e| {
+        eprintln!("Failed to initialize logger: {e:?}");
+    });
 
     trace!("loading cache");
-    let cache = Arc::new(
-        Cache::load(&config)
-            .and_then(|mut c| {
-                c.update(&config);
-                Some(c)
-            })
-            .unwrap_or_else(|| {
-                warn!("Failed to load cache, rebuilding");
-                let cache = Cache::build_from_config(&config);
-                cache
-                    .save(&config)
-                    .unwrap_or_else(|e| warn!("Failed to save cache {e:?}"));
-                cache
-            }),
-    );
+    let (cache, old_config) = Cache::load(&config).unwrap_or_else(|e| {
+        warn!("Failed to load cache: {e:?}, using default");
+
+        let cache = Cache::build_from_config(&config);
+
+        trace!("saving cache");
+        cache
+            .save(&config)
+            .unwrap_or_else(|e| warn!("Failed to save cache {e:?}"));
+
+        (cache, (*config).clone())
+    });
+
+    let cache = if *config != old_config {
+        trace!("config changed, rebuilding");
+        Cache::build_from_config(&config)
+    } else {
+        cache
+    };
+    let cache = Arc::new(cache);
 
     trace!("initializing player");
     let player = Arc::new(Mutex::new(
         Player::new().expect("Failed to initialize player"),
     ));
+    let player_weak = Arc::downgrade(&player);
 
     {
-        let player = player.clone();
         trace!("locking player");
-        player
-            .clone()
-            .lock()
-            .unwrap()
-            .media_controls
-            .attach(move |event: MediaControlEvent| {
-                trace!("media control event {:?}", event);
+        let mut player = player.lock().unwrap();
 
-                match event {
-                    MediaControlEvent::Play => Player::play(player.clone()),
-                    MediaControlEvent::Pause => Player::pause(player.clone()),
-                    MediaControlEvent::Toggle => Player::play_pause(player.clone()),
-                    MediaControlEvent::Next => Player::skip(player.clone()),
-                    MediaControlEvent::Previous => Ok(()),
-                    MediaControlEvent::Stop => Player::stop(player.clone()),
-                    MediaControlEvent::Seek(_) => todo!(),
-                    MediaControlEvent::SeekBy(_, _) => todo!(),
-                    MediaControlEvent::SetPosition(_) => todo!(),
-                    MediaControlEvent::OpenUri(_) => Ok(()),
-                    MediaControlEvent::Raise => Ok(()),
-                    MediaControlEvent::Quit => Ok(()),
-                }
-                .expect("Failed to handle media control event");
-            })
-            .expect("Failed to attach");
+        trace!("attachin weak ref");
+        player.attach_arc(player_weak);
+
+        trace!("attaching media controls");
+        player.attach_media_controls().unwrap_or_else(|e| {
+            warn!("Failed to attach media controls: {e:?}");
+        });
     }
-    trace!("attached media controls: unlock");
 
-    trace!("running tui");
-    tui(&config, cache, player.clone()).expect("Failed to run tui");
+    trace!("entering tui");
+    tui(config.clone(), cache.clone(), player.clone()).expect("Failed to run tui");
     trace!("tui exited");
-
-    trace!("locking player");
-    std::fs::remove_file(player.lock().unwrap().tempfile.path())
-        .expect("Failed to remove tempfile");
 
     trace!("quitting");
 }

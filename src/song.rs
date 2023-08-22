@@ -1,4 +1,4 @@
-use std::{collections::HashMap, num::NonZeroU32};
+use std::{collections::HashMap, fmt::Debug, num::NonZeroU32};
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub enum Value {
@@ -469,14 +469,16 @@ impl From<symphonia::core::meta::StandardTagKey> for StandardTagKey {
 pub struct Song {
     pub standard_tags: HashMap<StandardTagKey, Value>,
     pub other_tags: HashMap<String, Value>,
-    pub visuals: Vec<Visual>,
     pub duration: f32,
 }
 
 impl Song {
-    pub fn front_cover(&self) -> Option<&Visual> {
-        self.visuals
-            .iter()
-            .find(|x| x.usage == Some(StandardVisualKey::FrontCover))
+    pub fn gain_factor(&self) -> Option<f32> {
+        self.standard_tags
+            .get(&StandardTagKey::ReplayGainTrackGain)
+            .map(|x| x.to_string())
+            .and_then(|x| x.strip_suffix(" dB").map(|x| x.to_string()))
+            .and_then(|x| x.parse::<f32>().ok())
+            .map(|x| 10.0f32.powf(x / 20.0))
     }
 }

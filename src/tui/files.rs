@@ -83,9 +83,9 @@ impl Tui for Files {
             .with_offset({
                 if len <= area.height as usize {
                     0
-                } else if selected > 1 + area.height as usize / 2 {
+                } else if selected > area.height as usize / 2 {
                     if selected < len + 1 - area.height as usize / 2 {
-                        selected - 1 - area.height as usize / 2
+                        selected - area.height as usize / 2
                     } else {
                         len + 1 - area.height as usize
                     }
@@ -102,14 +102,17 @@ impl Tui for Files {
 
         let l = items(&self.cache.clone(), &self.path).count();
 
+        trace!("lock player");
+        let mut player = self.player.lock().expect("Failed to lock player");
+
         match event {
             Event::Key(KeyEvent { code, .. }) => match code {
                 KeyCode::Char(' ') => {
-                    Player::play_pause(self.player.clone()).expect("Failed to play/pause")
+                    player.play_pause().expect("Failed to play/pause");
                 }
-                KeyCode::Char('n') => Player::skip(self.player.clone()).expect("Failed to skip"),
-                KeyCode::Char('s') => Player::stop(self.player.clone()).expect("Failed to stop"),
-                KeyCode::Char('c') => Player::clear(self.player.clone()).expect("Failed to clear"),
+                KeyCode::Char('n') => player.skip().expect("Failed to skip"),
+                KeyCode::Char('s') => player.stop().expect("Failed to stop"),
+                KeyCode::Char('c') => player.clear().expect("Failed to clear"),
                 KeyCode::Up => {
                     self.selected
                         .last_mut()
@@ -143,7 +146,8 @@ impl Tui for Files {
                     match c {
                         Cache::File { ref song, .. } => {
                             trace!("queueing song");
-                            Player::queue(self.player.clone(), song.clone(), &self.path, &f)
+                            player
+                                .queue(song.clone(), &self.path, &f)
                                 .expect("Failed to queue");
                         }
                         Cache::Directory { .. } => {

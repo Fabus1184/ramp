@@ -28,9 +28,11 @@ ratatui = { version = "0.22.0", features = ["all-widgets"] }
 
 # audio
 cpal = "0.15.2"
-symphonia = { version = "0.5.3", features = ["mp3"] }
+symphonia = { version = "0.5.3", features = ["mp3", "all-formats", "mkv", "ogg", "wav", "aac", "alac", "flac", "all-codecs"], default-features = false }
 souvlaki = "0.6.1"
 float-ord = "0.3.2"
 anyhow = "1.0.75"
 rayon = "1.7.0"
 replaygain = "1.0.1"
+dirs = "5.0.1"
+ordered-float = { version = "3.9.0", features = ["serde"] }

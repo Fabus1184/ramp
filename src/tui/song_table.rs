@@ -6,8 +6,9 @@ use ratatui::{
 use crate::{
     cache::Cache,
     song::{Song, StandardTagKey},
-    UNKNOWN_STRING,
 };
+
+use super::UNKNOWN_STRING;
 
 pub const HEADER: fn() -> Row<'static> = || {
     Row::new(["Track #️⃣ ", "Artist 🧑‍🎤 ", "Title / File 🎶 ", "Album 🖼️ "])
