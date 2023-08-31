@@ -1,18 +1,19 @@
 use std::{
     fs::File,
-    sync::{Arc, Mutex},
+    io::{Read, Write},
+    sync::{atomic::Ordering, Arc},
 };
 
 use cache::Cache;
 use log::{trace, warn, LevelFilter};
 use player::Player;
-use simplelog::WriteLogger;
+use simplelog::{CombinedLogger, WriteLogger};
 
 use crate::{config::Config, tui::tui};
 
-mod audio;
 mod cache;
 mod config;
+mod decoder;
 mod player;
 mod song;
 mod tui;
@@ -41,11 +42,11 @@ fn main() {
         }),
     );
 
-    let _logger = WriteLogger::init(
-        //#[cfg(debug_assertions)]
+    let _logger = CombinedLogger::init(vec![WriteLogger::new(
+        #[cfg(debug_assertions)]
         LevelFilter::Trace,
-        //#[cfg(not(debug_assertions))]
-        //LevelFilter::Info,
+        #[cfg(not(debug_assertions))]
+        LevelFilter::Info,
         simplelog::ConfigBuilder::new()
             .set_target_level(LevelFilter::Error)
             .set_location_level(LevelFilter::Error)
@@ -53,9 +54,19 @@ fn main() {
             .add_filter_ignore_str("symphonia")
             .build(),
         File::create(&config.log_path).expect("Failed to create log file"),
-    )
-    .unwrap_or_else(|e| {
-        eprintln!("Failed to initialize logger: {e:?}");
+    )])
+    .expect("Failed to initialize logger");
+
+    let quit = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut f = File::open(&config.log_path).expect("Failed to open log file");
+    let _quit = quit.clone();
+    let handle = std::thread::spawn(move || {
+        while !_quit.load(Ordering::SeqCst) {
+            let mut buf = Vec::new();
+            f.read_to_end(&mut buf).unwrap();
+            std::io::stdout().write_all(&buf).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
     });
 
     trace!("loading cache");
@@ -81,23 +92,21 @@ fn main() {
     let cache = Arc::new(cache);
 
     trace!("initializing player");
-    let player = Arc::new(Mutex::new(
-        Player::new().expect("Failed to initialize player"),
-    ));
-    let player_weak = Arc::downgrade(&player);
+    let player = Player::new(cache.clone()).expect("Failed to initialize player");
 
     {
-        trace!("locking player");
-        let mut player = player.lock().unwrap();
-
-        trace!("attachin weak ref");
-        player.attach_arc(player_weak);
-
         trace!("attaching media controls");
-        player.attach_media_controls().unwrap_or_else(|e| {
-            warn!("Failed to attach media controls: {e:?}");
-        });
+        player
+            .lock()
+            .unwrap()
+            .attach_media_controls()
+            .unwrap_or_else(|e| {
+                warn!("Failed to attach media controls: {e:?}");
+            });
     }
+
+    quit.store(true, Ordering::SeqCst);
+    handle.join().expect("Failed to join log thread");
 
     trace!("entering tui");
     tui(config.clone(), cache.clone(), player.clone()).expect("Failed to run tui");

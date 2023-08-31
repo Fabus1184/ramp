@@ -4,7 +4,7 @@ use ratatui::{
 };
 
 use crate::{
-    cache::Cache,
+    cache::CacheEntry,
     song::{Song, StandardTagKey},
 };
 
@@ -22,9 +22,9 @@ const KEYS: [StandardTagKey; 4] = [
     StandardTagKey::Album,
 ];
 
-pub fn cache_row<'a>(key: &String, value: &Cache) -> Row<'a> {
+pub fn cache_row<'a>(key: &str, value: &CacheEntry) -> Row<'a> {
     Row::new(match value {
-        Cache::File { ref song, .. } => {
+        CacheEntry::File { ref song, .. } => {
             let track = song
                 .standard_tags
                 .get(&StandardTagKey::TrackNumber)
@@ -41,7 +41,7 @@ pub fn cache_row<'a>(key: &String, value: &Cache) -> Row<'a> {
                 .standard_tags
                 .get(&StandardTagKey::TrackTitle)
                 .map(|s| s.to_string())
-                .unwrap_or(key.clone());
+                .unwrap_or(key.to_string());
 
             let album = song
                 .standard_tags
@@ -51,7 +51,7 @@ pub fn cache_row<'a>(key: &String, value: &Cache) -> Row<'a> {
 
             [track, artist, title, album]
         }
-        Cache::Directory { .. } => ["", "", key.as_str(), ""].map(|s| s.to_string()),
+        CacheEntry::Directory { .. } => ["", "", key, ""].map(|s| s.to_string()),
     })
 }
 

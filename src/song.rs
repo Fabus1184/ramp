@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, num::NonZeroU32};
+use std::{collections::HashMap, fmt::Debug, num::NonZeroU32, time::Duration};
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub enum Value {
@@ -469,7 +469,7 @@ impl From<symphonia::core::meta::StandardTagKey> for StandardTagKey {
 pub struct Song {
     pub standard_tags: HashMap<StandardTagKey, Value>,
     pub other_tags: HashMap<String, Value>,
-    pub duration: f32,
+    pub duration: Duration,
 }
 
 impl Song {

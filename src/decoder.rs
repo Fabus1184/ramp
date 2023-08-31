@@ -1,6 +1,6 @@
 use std::{collections::HashMap, thread::JoinHandle};
 
-use log::warn;
+use log::{info, warn};
 use replaygain::ReplayGain;
 use symphonia::core::{
     audio::{SampleBuffer, SignalSpec},
@@ -142,7 +142,10 @@ where
             track.id
         ))?);
 
-    let duration = duration.seconds as f32 + duration.frac as f32;
+    let duration = std::time::Duration::from_secs_f64(duration.seconds as f64 + duration.frac);
+
+    // TODO
+    let duration = duration.saturating_sub(std::time::Duration::from_secs(20));
 
     let (mut standard_tags, other_tags) = metadata
         .map(|m| {
@@ -164,6 +167,11 @@ where
         .unwrap_or_default();
 
     if !standard_tags.contains_key(&StandardTagKey::ReplayGainTrackGain) {
+        info!(
+            "File {} is missing ReplayGain, calculating",
+            path.as_ref().display()
+        );
+
         let mut rg = ReplayGain::new(
             track
                 .codec_params

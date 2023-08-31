@@ -29,16 +29,28 @@ use self::{fancy::Fancy, files::Files, queue::Queue, search::Search, status::Sta
 
 pub const UNKNOWN_STRING: &'static str = "<unknown>";
 
+pub fn format_duration(duration: Duration) -> String {
+    let hours = duration.as_secs() / 3600;
+    let minutes = (duration.as_secs() % 3600) / 60;
+    let seconds = duration.as_secs() % 60;
+
+    if hours > 0 {
+        format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+    } else {
+        format!("{:02}:{:02}", minutes, seconds)
+    }
+}
+
 pub trait Tui {
-    fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>);
-    fn input(&mut self, event: &Event);
+    fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) -> anyhow::Result<()>;
+    fn input(&mut self, event: &Event) -> anyhow::Result<()>;
 }
 
 pub fn tui<'a>(
     _config: Arc<Config>,
     cache: Arc<Cache>,
     player: Arc<Mutex<Player>>,
-) -> std::io::Result<()> {
+) -> anyhow::Result<()> {
     let stdout = std::io::stdout();
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -56,7 +68,7 @@ pub fn tui<'a>(
             ("Queue 🕰️ ", Box::new(Queue::new(player.clone()))),
             (
                 "Search 🔎", /* idk, whatever */
-                Box::new(Search::new(cache.clone())),
+                Box::new(Search::new(cache.clone(), player.clone())),
             ),
             ("Fancy stuff ✨ ", Box::new(Fancy::new(player.clone()))),
         ],
@@ -72,12 +84,12 @@ pub fn tui<'a>(
                 .direction(Direction::Vertical)
                 .split(f.size());
 
-            tabs.draw(main_area[0], f);
-            usage.draw(main_area[1], f);
+            tabs.draw(main_area[0], f).expect("Failed to draw tabs");
+            usage.draw(main_area[1], f).expect("Failed to draw usage");
         })?;
 
         if event::poll(Duration::from_secs_f32(0.2))? {
-            tabs.input(&event::read()?);
+            tabs.input(&event::read()?)?;
         }
 
         if !*running.lock().unwrap() {

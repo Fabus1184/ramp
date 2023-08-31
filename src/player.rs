@@ -13,16 +13,17 @@ use tempfile::NamedTempFile;
 use std::{
     collections::VecDeque,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         mpsc::{Receiver, SyncSender},
-        Mutex, Weak,
+        Arc, Mutex, Weak,
     },
     time::Duration,
 };
 
 use crate::{
-    audio,
+    cache::Cache,
+    decoder,
     song::{Song, StandardTagKey},
 };
 
@@ -33,6 +34,7 @@ enum StreamCommand {
 
 struct QueuedSong {
     song: Song,
+    path: PathBuf,
     metadata: Option<MetadataRevision>,
     signal_spec: SignalSpec,
     receiver: Receiver<Vec<f32>>,
@@ -51,6 +53,7 @@ fn front_cover<'a>(metadata: &'a Option<MetadataRevision>) -> Option<&[u8]> {
 
 struct CurrentSong {
     song: Song,
+    path: PathBuf,
     metadata: Option<MetadataRevision>,
     stream_command_sender: SyncSender<StreamCommand>,
     elapsed: Duration,
@@ -58,6 +61,7 @@ struct CurrentSong {
 }
 
 pub struct Player {
+    cache: Arc<Cache>,
     playing: bool,
     current: Option<CurrentSong>,
     next: VecDeque<QueuedSong>,
@@ -68,7 +72,7 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new() -> anyhow::Result<Player> {
+    pub fn new(cache: Arc<Cache>) -> anyhow::Result<Arc<Mutex<Player>>> {
         let device = cpal::default_host()
             .default_output_device()
             .ok_or(anyhow::anyhow!("Failed to get default output device"))?;
@@ -78,9 +82,10 @@ impl Player {
             dbus_name: "rcmp",
             hwnd: None,
         })
-        .expect("Failed to create media controls");
+        .map_err(|e| anyhow::anyhow!("Failed to create media controls: {:?}", e))?;
 
-        Ok(Player {
+        let player = Player {
+            cache,
             playing: false,
             current: None,
             next: VecDeque::new(),
@@ -88,11 +93,13 @@ impl Player {
             media_controls,
             tempfile: NamedTempFile::new().expect("Failed to create tempfile"),
             arc: Weak::new(),
-        })
-    }
+        };
 
-    pub fn attach_arc(&mut self, weak: Weak<Mutex<Player>>) {
-        self.arc = weak;
+        let arc = Arc::new(Mutex::new(player));
+
+        arc.lock().unwrap().arc = Arc::downgrade(&arc);
+
+        Ok(arc)
     }
 
     pub fn update_media_controls(
@@ -127,6 +134,7 @@ impl Player {
     pub fn play(&mut self) -> anyhow::Result<()> {
         if let Some(CurrentSong {
             song,
+            path,
             metadata,
             stream_command_sender,
             elapsed: duration,
@@ -143,6 +151,7 @@ impl Player {
 
             self.current = Some(CurrentSong {
                 song,
+                path,
                 metadata,
                 stream_command_sender,
                 elapsed: duration,
@@ -155,6 +164,7 @@ impl Player {
 
             if let Some(QueuedSong {
                 song,
+                path,
                 metadata,
                 signal_spec,
                 receiver,
@@ -171,6 +181,7 @@ impl Player {
 
                 self.current = Some(CurrentSong {
                     song,
+                    path,
                     metadata,
                     stream_command_sender: sender,
                     elapsed: Duration::from_secs(0),
@@ -207,7 +218,7 @@ impl Player {
         let arc = self.arc.upgrade().expect("Failed to upgrade weak player");
         let arc2 = arc.clone();
 
-        std::thread::spawn(move || {
+        let thread = std::thread::spawn(move || {
             trace!("locking player");
             let player = arc.lock().expect("Failed to lock player");
             let mut n = 0;
@@ -281,19 +292,18 @@ impl Player {
                     },
                     Err(e) => {
                         warn!("Failed to receive command, sender disconnected {:?}", e);
-                        {
-                            trace!("locking player");
-                            let mut player = arc.lock().expect("Failed to lock player");
-                            player.current = None;
-                            player.playing = false;
-                        }
                         break;
                     }
                 }
             }
 
-            trace!("play: stream thread exiting");
+            trace!(
+                "play: stream thread {:?} exiting",
+                std::thread::current().id()
+            );
         });
+
+        trace!("Spawned stream thead {:?}", thread.thread().id());
 
         command_tx
     }
@@ -331,22 +341,24 @@ impl Player {
         Ok(())
     }
 
-    pub fn queue(
-        &mut self,
-        song: Song,
-        path: &Vec<String>,
-        file_name: &String,
-    ) -> anyhow::Result<()> {
-        let path = path
-            .into_iter()
-            .chain(std::iter::once(file_name))
-            .fold(PathBuf::new(), |acc, p| acc.join(p));
+    pub fn queue<P>(&mut self, path: P) -> anyhow::Result<()>
+    where
+        P: AsRef<Path>,
+    {
+        let song = self
+            .cache
+            .get(path.as_ref().clone())?
+            .ok_or(anyhow::anyhow!(
+                "Failed to get song with path {:?}",
+                path.as_ref().display()
+            ))?
+            .as_file()?;
 
         // TODO: adaptively choose buffer size based on signal spec and config
         let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(32);
 
         let mut last = std::time::Instant::now();
-        let (metadata, signal_spec, _handle) = audio::read_audio(&path, move |data| {
+        let (metadata, signal_spec, _handle) = decoder::read_audio(&path, move |data| {
             trace!(
                 "read_audio: got {} frames, took {:?}",
                 data.len(),
@@ -358,7 +370,8 @@ impl Player {
         })?;
 
         self.next.push_back(QueuedSong {
-            song,
+            song: song.clone(),
+            path: path.as_ref().to_path_buf(),
             metadata,
             signal_spec,
             receiver: rx,
@@ -387,16 +400,23 @@ impl Player {
 
     pub fn skip(&mut self) -> anyhow::Result<()> {
         trace!("skipping song");
+        trace!("next len: {:?}", self.next.len());
         self.stop()?;
+
+        trace!("stopped");
+        trace!("next len: {:?}", self.next.len());
         self.play()?;
+
+        trace!("played");
+        trace!("next len: {:?}", self.next.len());
 
         Ok(())
     }
 
-    pub fn current(&self) -> Option<&Song> {
+    pub fn current(&self) -> Option<(&Song, &Path)> {
         self.current
             .as_ref()
-            .map(|CurrentSong { ref song, .. }| song)
+            .map(|CurrentSong { ref song, path, .. }| (song, path.as_path()))
     }
 
     pub fn current_time(&self) -> Option<&Duration> {

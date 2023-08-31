@@ -29,7 +29,7 @@ impl<'a> Tabs<'a> {
 }
 
 impl Tui for Tabs<'_> {
-    fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) {
+    fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) -> anyhow::Result<()> {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
@@ -70,10 +70,12 @@ impl Tui for Tabs<'_> {
                 horizontal: 1,
             }),
             f,
-        );
+        )?;
+
+        Ok(())
     }
 
-    fn input(&mut self, event: &Event) {
+    fn input(&mut self, event: &Event) -> anyhow::Result<()> {
         trace!("Tabs input: {:?}", event);
         match event {
             Event::Key(KeyEvent { code, .. }) => match code {
@@ -89,10 +91,12 @@ impl Tui for Tabs<'_> {
                 }
                 _ => {
                     let content = self.tabs.get_mut(self.selected).expect("Tab not found");
-                    content.1.input(event);
+                    content.1.input(event)?;
                 }
             },
             _ => {}
         }
+
+        Ok(())
     }
 }

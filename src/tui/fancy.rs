@@ -8,9 +8,9 @@ use image::imageops::FilterType;
 use log::trace;
 use ratatui::{
     prelude::{Alignment, Constraint, CrosstermBackend, Direction, Layout, Rect},
-    style::{Color, Stylize},
+    style::{Color, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Cell, Padding, Paragraph, Row, Table},
     Frame,
 };
 
@@ -29,54 +29,42 @@ impl Fancy {
 }
 
 impl Tui for Fancy {
-    fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) {
+    fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) -> anyhow::Result<()> {
         trace!("locking player");
         let player = self.player.lock().expect("Failed to lock player");
 
-        let standard_tags = Paragraph::new(
+        let standard_tags = Table::new(
             player
                 .current()
-                .map(|s| {
+                .map(|(s, _)| {
                     s.standard_tags
                         .iter()
+                        .map(|(k, v)| (format!("{:?}", k), v))
+                        .chain(s.other_tags.iter().map(|(k, v)| (k.clone(), v)))
                         .map(|(k, v)| {
-                            Line::from(vec![
-                                Span::from(format!(" {:?}: ", k)),
-                                Span::from(format!("{}", v)).fg(Color::Gray),
-                            ])
+                            Row::new(vec![Cell::from(k).gray().bold(), Cell::from(v.to_string())])
                         })
                         .collect::<Vec<_>>()
                 })
-                .unwrap_or(vec![Line::from(vec![Span::from("no tags")])]),
+                .unwrap_or_default(),
         )
+        .widths(&[Constraint::Percentage(50), Constraint::Percentage(50)])
         .block(
             Block::new()
+                .padding(Padding::new(1, 0, 0, 0))
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .title(" Standard Tags "),
-        );
-
-        let other_tags = Paragraph::new(
-            player
-                .current()
-                .map(|s| {
-                    s.other_tags
-                        .iter()
-                        .map(|(k, v)| {
-                            Line::from(vec![
-                                Span::from(format!(" {}: ", k)),
-                                Span::from(format!("{}", v)).fg(Color::Gray),
-                            ])
+                .title(format!(
+                    " {} ",
+                    player
+                        .current()
+                        .map(|(_, p)| {
+                            p.to_str()
+                                .ok_or(anyhow::anyhow!("Failed to convert Path to str: {:?}", p))
                         })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or(vec![Line::from(vec![Span::from("no tags")])]),
-        )
-        .block(
-            Block::new()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .title(" Other Tags "),
+                        .unwrap_or(Ok(""))?,
+                ))
+                .title_style(Style::default().bold().light_blue()),
         );
 
         let layout = Layout::new()
@@ -89,11 +77,6 @@ impl Tui for Fancy {
             .split(area);
 
         let (left, _seperator, right) = (layout[0], layout[1], layout[2]);
-        let layout = Layout::new()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(left);
-        let (top, bottom) = (layout[0], layout[1]);
 
         if let Some(image) = player
             .current_cover()
@@ -107,7 +90,7 @@ impl Tui for Fancy {
 
             let rgb = resized
                 .as_flat_samples_u8()
-                .unwrap()
+                .expect("Failed to convert image")
                 .samples
                 .chunks(3)
                 .collect::<Vec<_>>();
@@ -116,12 +99,18 @@ impl Tui for Fancy {
             for y in (0..resized.height()).step_by(2) {
                 let mut line = vec![];
                 for x in 0..resized.width() {
-                    let [r1, g1, b1] = rgb[(y * resized.width() + x) as usize] else { panic!("Failed to get pixel as RGB") };
-                    let [r2, g2, b2] = rgb[(y * resized.width() + x + resized.width()) as usize] else { panic!("Failed to get pixel as RGB") };
+                    let [r1, g1, b1] = rgb
+                        .get((y * resized.width() + x) as usize)
+                        .and_then(|&x| x.try_into().ok())
+                        .unwrap_or([0, 0, 0]);
+                    let [r2, g2, b2] = rgb
+                        .get((y * resized.width() + x + resized.width()) as usize)
+                        .and_then(|&x| x.try_into().ok())
+                        .unwrap_or([0, 0, 0]);
                     line.push(
                         Span::from("▀")
-                            .fg(Color::Rgb(*r1, *g1, *b1))
-                            .bg(Color::Rgb(*r2, *g2, *b2)),
+                            .fg(Color::Rgb(r1, g1, b1))
+                            .bg(Color::Rgb(r2, g2, b2)),
                     );
                 }
                 lines.push(Line::from(line));
@@ -131,14 +120,18 @@ impl Tui for Fancy {
                 Block::new()
                     .border_type(BorderType::Rounded)
                     .borders(Borders::ALL)
-                    .title(" Album Art "),
+                    .title(" Album Art ")
+                    .title_style(Style::default().light_blue().bold()),
             );
 
             f.render_widget(image, right);
-            f.render_widget(standard_tags, top);
-            f.render_widget(other_tags, bottom);
+            f.render_widget(standard_tags, left);
         }
+
+        Ok(())
     }
 
-    fn input(&mut self, _event: &Event) {}
+    fn input(&mut self, _event: &Event) -> anyhow::Result<()> {
+        Ok(())
+    }
 }

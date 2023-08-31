@@ -27,7 +27,7 @@ impl Tui for Queue {
         &self,
         area: ratatui::prelude::Rect,
         f: &mut ratatui::Frame<'_, ratatui::prelude::CrosstermBackend<std::io::Stdout>>,
-    ) {
+    ) -> anyhow::Result<()> {
         trace!("drawing queue");
 
         trace!("lock player");
@@ -56,7 +56,11 @@ impl Tui for Queue {
             ]);
 
         f.render_widget(table, area);
+
+        Ok(())
     }
 
-    fn input(&mut self, _event: &Event) {}
+    fn input(&mut self, _event: &Event) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
