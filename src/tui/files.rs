@@ -10,7 +10,7 @@ use itertools::Itertools;
 use log::trace;
 use ratatui::{
     prelude::{Constraint, CrosstermBackend, Direction, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::{Paragraph, Table, TableState},
     Frame,
@@ -150,9 +150,11 @@ impl Files {
                     .filter(|(f, c)| match &self.filter {
                         FilterState::Disabled => true,
                         FilterState::Active { input, .. } => match c {
-                            CacheEntry::File { song } => song.standard_tags.iter().any(|(_, v)| {
-                                v.to_string().to_lowercase().contains(&input.to_lowercase())
-                            }),
+                            CacheEntry::File { song } => {
+                                song.standard_tags.iter().any(|(_, v)| {
+                                    v.to_string().to_lowercase().contains(&input.to_lowercase())
+                                }) || f.to_lowercase().contains(&input.to_lowercase())
+                            }
                             CacheEntry::Directory { .. } => {
                                 f.to_lowercase().contains(&input.to_lowercase())
                             }
@@ -195,7 +197,7 @@ impl Tui for Files {
     fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) -> anyhow::Result<()> {
         trace!("drawing files");
 
-        let (files_area, search_bar_area) = match self.filter {
+        let (inner_area, filter_area) = match self.filter {
             FilterState::Disabled => (area, None),
             FilterState::Active { .. } => {
                 let layout = Layout::new()
@@ -213,15 +215,15 @@ impl Tui for Files {
                 selected: true,
             } => vec![
                 Span::from("Filter: ").bold(),
-                Span::from(input.clone()).fg(Color::LightYellow),
-                Span::from("_").fg(Color::LightYellow).slow_blink(),
+                Span::from(input.clone()).light_yellow(),
+                Span::from("_").light_yellow().slow_blink(),
             ],
             FilterState::Active {
                 input,
                 selected: false,
             } => vec![
                 Span::from("Filter: ").bold(),
-                Span::from(input.clone()).fg(Color::LightYellow),
+                Span::from(input.clone()).light_yellow(),
             ],
         }));
 
@@ -233,17 +235,9 @@ impl Tui for Files {
         let len = items.len();
 
         let table = Table::new(items)
-            .header(
-                song_table::HEADER()
-                    .fg(Color::LightBlue)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .header(song_table::HEADER().light_blue().bold())
             .fg(Color::Rgb(210, 210, 210))
-            .highlight_style(
-                Style::default()
-                    .fg(Color::LightYellow)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .highlight_style(Style::default().light_yellow().bold())
             .highlight_symbol("⏯️  ")
             .column_spacing(4)
             .widths(&[
@@ -270,8 +264,23 @@ impl Tui for Files {
                 }
             });
 
+        let breadcrums = Paragraph::new(Line::from(
+            Span::from(format!("🔗 {}", self.path.display().to_string()))
+                .bold()
+                .light_red(),
+        ));
+
+        let layout = Layout::new()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(inner_area);
+
+        let (path_area, files_area) = (layout[0], layout[1]);
+
+        f.render_widget(breadcrums, path_area);
         f.render_stateful_widget(table, files_area, &mut table_state);
-        if let Some(search_bar_area) = search_bar_area {
+
+        if let Some(search_bar_area) = filter_area {
             f.render_widget(search_bar, search_bar_area);
         }
 

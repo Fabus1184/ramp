@@ -189,11 +189,11 @@ where
         })?;
         handle.join().expect("Failed to join thread");
 
-        let (gain, _peak) = rg.finish();
+        let (gain, peak) = rg.finish();
 
         standard_tags.insert(
             StandardTagKey::ReplayGainTrackGain,
-            Value::Float(gain as f64),
+            Value::Float((gain + peak) as f64 / 2.0),
         );
     }
 
