@@ -129,8 +129,9 @@ impl Files {
                     trace!("unlock player");
                 }
                 KeyCode::Backspace => {
-                    self.path.pop();
-                    self.selected.pop();
+                    if self.path.pop() {
+                        self.selected.pop();
+                    }
                 }
                 _ => {}
             }
