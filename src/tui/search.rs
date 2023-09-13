@@ -5,8 +5,8 @@ use std::{
 };
 
 use crossterm::event::{Event, KeyCode, KeyEvent};
-use float_ord::FloatOrd;
 use itertools::Itertools;
+use ordered_float::OrderedFloat;
 use ratatui::{
     prelude::{Constraint, CrosstermBackend, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
@@ -55,7 +55,7 @@ impl Search {
                 (
                     s,
                     p,
-                    FloatOrd(-jaro_winkler(
+                    OrderedFloat(-jaro_winkler(
                         self.keyword.to_lowercase().as_str(),
                         s.standard_tags
                             .get(&StandardTagKey::TrackTitle)
@@ -68,7 +68,7 @@ impl Search {
                 )
             })
             .sorted_unstable_by_key(|&(_, _, x)| x)
-            .take_while(|&(_, _, x)| x <= FloatOrd(0.0))
+            .take_while(|&(_, _, x)| x <= OrderedFloat(0.0))
             .map(|(s, p, _)| (s.clone(), p))
             .collect::<Vec<_>>();
     }

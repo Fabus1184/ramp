@@ -140,13 +140,16 @@ impl Files {
         Ok(())
     }
 
-    fn items<'a>(&'a self) -> anyhow::Result<impl Iterator<Item = (&'a String, &'a CacheEntry)>> {
-        self.cache
-            .get(&self.path)?
-            .ok_or(anyhow::anyhow!("Cache::get {:?} returned None", self.path))
-            .and_then(|d| d.as_directory())
-            .map(|d| {
-                d.iter()
+    fn items<'a>(
+        &'a self,
+    ) -> anyhow::Result<Box<dyn Iterator<Item = (&'a String, &'a CacheEntry)> + 'a>> {
+        let d = self.cache.get(&self.path)?;
+
+        Ok(d.map_or(Box::new(std::iter::empty()), |d| {
+            Box::new(
+                d.as_directory()
+                    .unwrap()
+                    .iter()
                     .filter(|(f, c)| match &self.filter {
                         FilterState::Disabled => true,
                         FilterState::Active { input, .. } => match c {
@@ -188,8 +191,9 @@ impl Files {
                             Ordering::Greater
                         }
                         (CacheEntry::Directory { .. }, CacheEntry::Directory { .. }) => f1.cmp(f2),
-                    })
-            })
+                    }),
+            )
+        }))
     }
 }
 

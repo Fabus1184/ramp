@@ -83,12 +83,13 @@ fn main() {
         (cache, (*config).clone())
     });
 
-    let cache = if *config != old_config {
+    let mut cache = if *config != old_config {
         trace!("config changed, rebuilding");
         Cache::build_from_config(&config)
     } else {
         cache
     };
+    cache.validate();
     let cache = Arc::new(cache);
 
     trace!("initializing player");

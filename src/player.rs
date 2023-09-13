@@ -2,7 +2,7 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     Device, OutputCallbackInfo, StreamConfig,
 };
-use log::{error, trace, warn};
+use log::{debug, error, trace, warn};
 use souvlaki::{MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, PlatformConfig};
 use symphonia::core::{
     audio::SignalSpec,
@@ -123,7 +123,7 @@ impl Player {
                 title: title.as_ref().map(|x| x.as_str()),
                 album: album.as_ref().map(|x| x.as_str()),
                 artist: artist.as_ref().map(|x| x.as_str()),
-                cover_url: cover_tempfile.path().to_str(),
+                cover_url: Some(format!("file://{}", cover_tempfile.path().display()).as_str()),
                 duration: None,
             })
             .map_err(|e| anyhow::anyhow!("Failed to set metadata: {:?}", e))?;
@@ -205,7 +205,6 @@ impl Player {
         let gain_factor = song.gain_factor().unwrap_or(1.0);
         trace!("play: gain_factor: {}", gain_factor);
 
-        let mut buf = Vec::new();
         let (command_tx, command_rx) = std::sync::mpsc::sync_channel::<StreamCommand>(1);
 
         let stream_config = StreamConfig {
@@ -222,6 +221,7 @@ impl Player {
             trace!("locking player");
             let player = arc.lock().expect("Failed to lock player");
             let mut n = 0;
+            let mut buf = Vec::new();
 
             let stream = player
                 .device
@@ -233,7 +233,7 @@ impl Player {
                             match receiver.recv() {
                                 Ok(s) => buf.extend(s.into_iter().map(|x| x * gain_factor)),
                                 Err(e) => {
-                                    warn!("Failed to receive sample, sender disconnected {:?}", e);
+                                    debug!("Failed to receive sample, sender disconnected {:?}", e);
 
                                     {
                                         trace!("locking player");
@@ -269,8 +269,14 @@ impl Player {
 
                         data.copy_from_slice(buf.drain(0..data.len()).as_slice());
                     },
-                    |e| {
-                        warn!("Output stream error {:?}", e);
+                    |e| match e {
+                        // TODO: figure out why this happens
+                        cpal::StreamError::BackendSpecific {
+                            err: cpal::BackendSpecificError { description },
+                        } if description == "`alsa::poll()` spuriously returned" => {}
+                        e => {
+                            warn!("Output stream error {:?}", e);
+                        }
                     },
                     Some(Duration::from_secs_f32(1.0)),
                 )

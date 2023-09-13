@@ -9,7 +9,7 @@ use log::{trace, warn};
 
 use walkdir::WalkDir;
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct Cache {
     root: HashMap<String, CacheEntry>,
 }
@@ -145,9 +145,19 @@ impl Cache {
             }
         }
     }
+
+    pub fn validate(&mut self) {
+        self.root.retain(|k, v| {
+            v.validate(PathBuf::new().join(k))
+                .map_err(|e| {
+                    warn!("Failed to validate child {:?}: {}", k, e);
+                })
+                .is_ok()
+        });
+    }
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 pub enum CacheEntry {
     File {
         song: Song,
@@ -155,6 +165,18 @@ pub enum CacheEntry {
     Directory {
         children: HashMap<String, CacheEntry>,
     },
+}
+
+impl std::fmt::Debug for CacheEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::File { .. } => Ok(()),
+            Self::Directory { children } => f
+                .debug_struct("Directory")
+                .field("children", children)
+                .finish(),
+        }
+    }
 }
 
 impl CacheEntry {
@@ -266,5 +288,34 @@ impl CacheEntry {
                 }
             }
         }
+    }
+
+    fn validate(&mut self, path: PathBuf) -> anyhow::Result<()> {
+        if !path.exists() {
+            anyhow::bail!("Path {:?} does not exist", path);
+        }
+
+        match self {
+            CacheEntry::File { .. } => {
+                if !path.is_file() {
+                    anyhow::bail!("Path {:?} is not a file", path);
+                }
+            }
+            CacheEntry::Directory { children, .. } => {
+                if !path.is_dir() {
+                    anyhow::bail!("Path {:?} is not a directory", path);
+                }
+
+                children.retain(|k, v| {
+                    v.validate(path.join(k))
+                        .map_err(|e| {
+                            warn!("Failed to validate child {:?}: {}", k, e);
+                        })
+                        .is_ok()
+                });
+            }
+        }
+
+        Ok(())
     }
 }
