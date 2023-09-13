@@ -1,3 +1,5 @@
+[![Rust](https://github.com/Fabus1184/ramp/actions/workflows/rust.yml/badge.svg)](https://github.com/Fabus1184/ramp/actions/workflows/rust.yml)
+
 # ramp - rust another music player
 
 Ramp is a no bullshit, batteries included, configurable music player for the terminal. It is designed to be lightweight, customizable and easy to use.
