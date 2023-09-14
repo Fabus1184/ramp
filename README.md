@@ -16,6 +16,8 @@ Ramp is a no bullshit, batteries included, configurable music player for the ter
 
 Ramp supports basically all common audio formats thanks to [symphonia](https://crates.io/crates/symphonia).
 
+MPRIS is supported.
+
 It also uses caching to store metadata about music files in order to avoid loading times during use.
 
 Other than that, it basically just plays music.
