@@ -60,6 +60,16 @@ impl Search {
                         s.standard_tags
                             .get(&StandardTagKey::TrackTitle)
                             .map(|s| s.to_string().to_lowercase())
+                            .or(l.clone())
+                            .unwrap_or(UNKNOWN_STRING.to_string())
+                            .to_lowercase()
+                            .as_str(),
+                    )),
+                    OrderedFloat(-jaro_winkler(
+                        self.keyword.to_lowercase().as_str(),
+                        s.standard_tags
+                            .get(&StandardTagKey::Artist)
+                            .map(|s| s.to_string().to_lowercase())
                             .or(l)
                             .unwrap_or(UNKNOWN_STRING.to_string())
                             .to_lowercase()
@@ -67,9 +77,9 @@ impl Search {
                     )),
                 )
             })
-            .sorted_unstable_by_key(|&(_, _, x)| x)
-            .take_while(|&(_, _, x)| x <= OrderedFloat(0.0))
-            .map(|(s, p, _)| (s.clone(), p))
+            .sorted_unstable_by_key(|&(_, _, x, y)| x.min(y))
+            .take_while(|&(_, _, x, y)| x.min(y) <= OrderedFloat(0.0))
+            .map(|(s, p, _, _)| (s.clone(), p))
             .collect::<Vec<_>>();
     }
 }

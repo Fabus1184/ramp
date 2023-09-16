@@ -27,7 +27,6 @@ image = { version = "0.24.7", default-features = false, features = [
     "png",
     "jpeg",
 ] }
-strsim = "0.10.0"
 
 # audio
 cpal = "0.15.2"
@@ -44,3 +43,4 @@ symphonia = { version = "0.5.3", features = [
 ], default-features = false }
 souvlaki = "0.6.1"
 replaygain = "1.0.1"
+strsim = "0.10.0"
