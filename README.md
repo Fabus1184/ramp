@@ -1,3 +1,5 @@
+[![Rust](https://github.com/Fabus1184/ramp/actions/workflows/rust.yml/badge.svg)](https://github.com/Fabus1184/ramp/actions/workflows/rust.yml)
+
 # ramp - rust another music player
 
 Ramp is a no bullshit, batteries included, configurable music player for the terminal. It is designed to be lightweight, customizable and easy to use.
@@ -13,6 +15,8 @@ Ramp is a no bullshit, batteries included, configurable music player for the ter
 ## Features
 
 Ramp supports basically all common audio formats thanks to [symphonia](https://crates.io/crates/symphonia).
+
+MPRIS is supported.
 
 It also uses caching to store metadata about music files in order to avoid loading times during use.
 
