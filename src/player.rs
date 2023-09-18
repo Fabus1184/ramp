@@ -216,6 +216,7 @@ impl Player {
 
         let arc = self.arc.upgrade().expect("Failed to upgrade weak player");
         let arc2 = arc.clone();
+        let arc3 = arc.clone();
 
         let thread = std::thread::spawn(move || {
             trace!("locking player");
@@ -269,13 +270,17 @@ impl Player {
 
                         data.copy_from_slice(buf.drain(0..data.len()).as_slice());
                     },
-                    |e| match e {
+                    move |e| match e {
                         // TODO: figure out why this happens
                         cpal::StreamError::BackendSpecific {
                             err: cpal::BackendSpecificError { description },
                         } if description == "`alsa::poll()` spuriously returned" => {}
                         e => {
                             warn!("Output stream error {:?}", e);
+                            let mut player = arc3.lock().expect("Failed to lock player");
+                            player.stop().unwrap_or_else(|e| {
+                                warn!("Failed to stop player: {:?}", e);
+                            });
                         }
                     },
                     Some(Duration::from_secs_f32(1.0)),
