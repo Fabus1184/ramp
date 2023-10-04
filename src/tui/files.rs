@@ -261,7 +261,7 @@ impl Tui for Files {
                     if selected < len + 1 - area.height as usize / 2 {
                         selected - area.height as usize / 2
                     } else {
-                        len + 1 - area.height as usize
+                        len + 2 - area.height as usize
                     }
                 } else {
                     0

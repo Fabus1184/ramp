@@ -39,31 +39,43 @@ impl Tui for Status {
 
         trace!("locking player");
         let playing = Paragraph::new(
-            if let Some((song, _)) = self.player.lock().unwrap().current() {
+            if let Some((song, path)) = self.player.lock().unwrap().current() {
                 let title = song
                     .standard_tags
                     .get(&StandardTagKey::TrackTitle)
                     .map(|s| s.to_string())
+                    .or(path
+                        .components()
+                        .last()
+                        .map(|s| s.as_os_str().to_string_lossy().to_string()))
                     .unwrap_or(UNKNOWN_STRING.to_string());
+
                 let artist = song
                     .standard_tags
                     .get(&StandardTagKey::Artist)
-                    .map(|s| s.to_string())
-                    .unwrap_or(UNKNOWN_STRING.to_string());
+                    .map(|s| s.to_string());
 
-                Line::from(vec![
-                    Span::from(" "),
-                    Span::from(artist)
-                        .fg(Color::LightYellow)
-                        .add_modifier(ratatui::style::Modifier::BOLD),
-                    Span::from(" - ").fg(Color::White),
+                let mut elems = vec![Span::from(" ")];
+
+                if let Some(artist) = artist {
+                    elems.push(
+                        Span::from(artist)
+                            .fg(Color::LightYellow)
+                            .add_modifier(ratatui::style::Modifier::BOLD),
+                    );
+                    elems.push(Span::from(" - ").fg(Color::White));
+                }
+
+                elems.extend([
                     Span::from(title)
                         .fg(Color::LightYellow)
                         .add_modifier(ratatui::style::Modifier::BOLD),
                     Span::from(format!(" ({})", format_duration(song.duration)))
                         .fg(Color::LightGreen),
                     Span::from(" "),
-                ])
+                ]);
+
+                Line::from(elems)
             } else {
                 Line::from(vec![
                     Span::from(" - ").add_modifier(ratatui::style::Modifier::BOLD)

@@ -5,7 +5,7 @@ use std::{
 };
 
 use cache::Cache;
-use log::{trace, warn, LevelFilter};
+use log::{info, trace, warn, LevelFilter};
 use player::Player;
 use simplelog::{CombinedLogger, WriteLogger};
 
@@ -83,9 +83,15 @@ fn main() {
         (cache, (*config).clone())
     });
 
-    let mut cache = if *config != old_config {
-        trace!("config changed, rebuilding");
-        Cache::build_from_config(&config)
+    let mut cache = if config.search_directories != old_config.search_directories
+        || config.extensions != old_config.extensions
+    {
+        info!("config changed, rebuilding");
+        let cache = Cache::build_from_config(&config);
+        cache
+            .save(&config)
+            .unwrap_or_else(|e| warn!("Failed to save cache {e:?}"));
+        cache
     } else {
         cache
     };

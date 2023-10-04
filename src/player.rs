@@ -2,7 +2,7 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     Device, OutputCallbackInfo, StreamConfig,
 };
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 use souvlaki::{MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, PlatformConfig};
 use symphonia::core::{
     audio::SignalSpec,
@@ -207,10 +207,11 @@ impl Player {
 
         let (command_tx, command_rx) = std::sync::mpsc::sync_channel::<StreamCommand>(1);
 
+        let buffer_size = signal_spec.rate * 2;
         let stream_config = StreamConfig {
             channels: signal_spec.channels.count() as u16,
             sample_rate: cpal::SampleRate(signal_spec.rate),
-            buffer_size: cpal::BufferSize::Fixed(signal_spec.rate * 2),
+            buffer_size: cpal::BufferSize::Fixed(buffer_size),
         };
         trace!("play: stream_config: {:?}", stream_config);
 
@@ -218,6 +219,7 @@ impl Player {
         let arc2 = arc.clone();
         let arc3 = arc.clone();
 
+        let signal_spec = signal_spec.clone();
         let thread = std::thread::spawn(move || {
             trace!("locking player");
             let player = arc.lock().expect("Failed to lock player");
@@ -235,6 +237,14 @@ impl Player {
                                 Ok(s) => buf.extend(s.into_iter().map(|x| x * gain_factor)),
                                 Err(e) => {
                                     debug!("Failed to receive sample, sender disconnected {:?}", e);
+
+                                    let duration = Duration::from_secs_f32(
+                                        buffer_size as f32
+                                            / (signal_spec.channels.bits() * signal_spec.rate)
+                                                as f32,
+                                    );
+                                    info!("Sleeping for {:?} to finish song", duration);
+                                    std::thread::sleep(duration);
 
                                     {
                                         trace!("locking player");
@@ -264,7 +274,10 @@ impl Player {
                                 ..
                             }) = player.current.as_mut()
                             {
-                                *duration = Duration::from_secs_f32(n as f32 / (2.0 * 48_000.0));
+                                *duration = Duration::from_secs_f32(
+                                    n as f32
+                                        / (signal_spec.channels.bits() * signal_spec.rate) as f32,
+                                );
                             }
                         }
 

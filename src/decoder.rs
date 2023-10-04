@@ -193,7 +193,11 @@ where
 
         standard_tags.insert(
             StandardTagKey::ReplayGainTrackGain,
-            Value::Float((gain + peak) as f64 / 2.0),
+            Value::Float(gain as f64),
+        );
+        standard_tags.insert(
+            StandardTagKey::ReplayGainTrackPeak,
+            Value::Float(peak as f64),
         );
     }
 
