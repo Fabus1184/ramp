@@ -1,5 +1,4 @@
 use std::{
-    io::Stdout,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -8,7 +7,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent};
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use ratatui::{
-    prelude::{Constraint, CrosstermBackend, Direction, Layout, Rect},
+    prelude::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{Paragraph, Table, TableState},
@@ -85,7 +84,7 @@ impl Search {
 }
 
 impl Tui for Search {
-    fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) -> anyhow::Result<()> {
+    fn draw(&self, area: Rect, f: &mut Frame) -> anyhow::Result<()> {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([

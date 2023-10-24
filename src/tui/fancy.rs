@@ -1,13 +1,10 @@
-use std::{
-    io::Stdout,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use crossterm::event::Event;
 use image::imageops::FilterType;
 use log::trace;
 use ratatui::{
-    prelude::{Alignment, Constraint, CrosstermBackend, Direction, Layout, Rect},
+    prelude::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Padding, Paragraph, Row, Table},
@@ -29,7 +26,7 @@ impl Fancy {
 }
 
 impl Tui for Fancy {
-    fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) -> anyhow::Result<()> {
+    fn draw(&self, area: Rect, f: &mut Frame) -> anyhow::Result<()> {
         trace!("locking player");
         let player = self.player.lock().expect("Failed to lock player");
 

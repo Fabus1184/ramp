@@ -7,7 +7,6 @@ mod status;
 mod tabs;
 
 use std::{
-    io::Stdout,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -42,7 +41,7 @@ pub fn format_duration(duration: Duration) -> String {
 }
 
 pub trait Tui {
-    fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) -> anyhow::Result<()>;
+    fn draw(&self, area: Rect, f: &mut Frame) -> anyhow::Result<()>;
     fn input(&mut self, event: &Event) -> anyhow::Result<()>;
 }
 

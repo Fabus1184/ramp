@@ -1,12 +1,11 @@
 use std::{
-    io::Stdout,
     sync::{Arc, Mutex},
 };
 
 use itertools::Itertools;
 use log::trace;
 use ratatui::{
-    prelude::{Constraint, CrosstermBackend, Direction, Layout, Margin, Rect},
+    prelude::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{LineGauge, Paragraph},
@@ -28,7 +27,7 @@ impl Status {
 }
 
 impl Tui for Status {
-    fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) -> anyhow::Result<()> {
+    fn draw(&self, area: Rect, f: &mut Frame) -> anyhow::Result<()> {
         let layout = Layout::default()
             .direction(ratatui::prelude::Direction::Vertical)
             .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())

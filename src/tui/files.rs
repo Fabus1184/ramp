@@ -1,6 +1,5 @@
 use std::{
     cmp::Ordering,
-    io::Stdout,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -9,7 +8,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use itertools::Itertools;
 use log::trace;
 use ratatui::{
-    prelude::{Constraint, CrosstermBackend, Direction, Layout, Rect},
+    prelude::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::{Paragraph, Table, TableState},
@@ -198,7 +197,7 @@ impl Files {
 }
 
 impl Tui for Files {
-    fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) -> anyhow::Result<()> {
+    fn draw(&self, area: Rect, f: &mut Frame) -> anyhow::Result<()> {
         trace!("drawing files");
 
         let (inner_area, filter_area) = match self.filter {

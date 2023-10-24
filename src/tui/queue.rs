@@ -23,11 +23,7 @@ impl Queue {
 }
 
 impl Tui for Queue {
-    fn draw(
-        &self,
-        area: ratatui::prelude::Rect,
-        f: &mut ratatui::Frame<'_, ratatui::prelude::CrosstermBackend<std::io::Stdout>>,
-    ) -> anyhow::Result<()> {
+    fn draw(&self, area: ratatui::prelude::Rect, f: &mut ratatui::Frame) -> anyhow::Result<()> {
         trace!("drawing queue");
 
         trace!("lock player");

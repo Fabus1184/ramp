@@ -1,9 +1,9 @@
-use std::{io::Stdout, sync::Mutex};
+use std::{sync::Mutex};
 
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use log::trace;
 use ratatui::{
-    prelude::{CrosstermBackend, Margin, Rect},
+    prelude::{Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{block::Title, Block, BorderType, Borders},
@@ -29,7 +29,7 @@ impl<'a> Tabs<'a> {
 }
 
 impl Tui for Tabs<'_> {
-    fn draw(&self, area: Rect, f: &mut Frame<'_, CrosstermBackend<Stdout>>) -> anyhow::Result<()> {
+    fn draw(&self, area: Rect, f: &mut Frame) -> anyhow::Result<()> {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
