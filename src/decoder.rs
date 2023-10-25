@@ -144,9 +144,6 @@ where
 
     let duration = std::time::Duration::from_secs_f64(duration.seconds as f64 + duration.frac);
 
-    // TODO
-    let duration = duration.saturating_sub(std::time::Duration::from_secs(20));
-
     let (mut standard_tags, other_tags) = metadata
         .map(|m| {
             let s = m
