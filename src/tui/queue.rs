@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use crossterm::event::Event;
 use log::trace;
@@ -8,17 +8,18 @@ use ratatui::{
     widgets::Table,
 };
 
-use crate::{player::Player, tui::song_table};
+use crate::{cache::Cache, player::facade::PlayerFacade, tui::song_table};
 
 use super::Tui;
 
 pub struct Queue {
-    player: Arc<Mutex<Player>>,
+    cache: Arc<Cache>,
+    player: Arc<RwLock<PlayerFacade>>,
 }
 
 impl Queue {
-    pub fn new(player: Arc<Mutex<Player>>) -> Self {
-        Queue { player }
+    pub fn new(cache: Arc<Cache>, player: Arc<RwLock<PlayerFacade>>) -> Self {
+        Queue { cache, player }
     }
 }
 
@@ -27,10 +28,12 @@ impl Tui for Queue {
         trace!("drawing queue");
 
         trace!("lock player");
-        let player = self.player.lock().unwrap();
+        let player = self.player.read().unwrap();
 
         let items = player
-            .nexts()
+            .queue
+            .iter()
+            .map(|p| self.cache.get(p).unwrap().unwrap().as_file().unwrap())
             .map(|s| song_table::song_row(s))
             .collect::<Vec<_>>();
 

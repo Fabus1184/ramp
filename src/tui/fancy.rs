@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use crossterm::event::Event;
 use image::imageops::FilterType;
@@ -11,16 +11,16 @@ use ratatui::{
     Frame,
 };
 
-use crate::player::Player;
+use crate::player::facade::PlayerFacade;
 
 use super::Tui;
 
 pub struct Fancy {
-    player: Arc<Mutex<Player>>,
+    player: Arc<RwLock<PlayerFacade>>,
 }
 
 impl Fancy {
-    pub fn new(player: Arc<Mutex<Player>>) -> Self {
+    pub fn new(player: Arc<RwLock<PlayerFacade>>) -> Self {
         Self { player }
     }
 }
@@ -28,12 +28,12 @@ impl Fancy {
 impl Tui for Fancy {
     fn draw(&self, area: Rect, f: &mut Frame) -> anyhow::Result<()> {
         trace!("locking player");
-        let player = self.player.lock().expect("Failed to lock player");
+        let player = self.player.read().expect("Failed to lock player");
 
         let standard_tags = Table::new(
             player
-                .current()
-                .map(|(s, _)| {
+                .current_song()
+                .map(|s| {
                     s.standard_tags
                         .iter()
                         .map(|(k, v)| (format!("{:?}", k), v))
@@ -54,10 +54,12 @@ impl Tui for Fancy {
                 .title(format!(
                     " {} ",
                     player
-                        .current()
-                        .map(|(_, p)| {
-                            p.to_str()
-                                .ok_or(anyhow::anyhow!("Failed to convert Path to str: {:?}", p))
+                        .current_song()
+                        .map(|s| {
+                            s.path.to_str().ok_or(anyhow::anyhow!(
+                                "Failed to convert Path to str: {:?}",
+                                s.path
+                            ))
                         })
                         .unwrap_or(Ok(""))?,
                 ))

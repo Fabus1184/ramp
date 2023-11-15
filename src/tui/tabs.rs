@@ -1,4 +1,4 @@
-use std::{sync::Mutex};
+use std::sync::Mutex;
 
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use log::trace;

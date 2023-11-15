@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{mpsc, Arc},
 };
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -17,7 +17,7 @@ use ratatui::{
 
 use crate::{
     cache::{Cache, CacheEntry},
-    player::Player,
+    player::command::Command,
     song::StandardTagKey,
     tui::song_table,
 };
@@ -34,12 +34,12 @@ pub struct Files {
     cache: Arc<Cache>,
     path: PathBuf,
     selected: Vec<usize>,
-    player: Arc<Mutex<Player>>,
+    player_tx: mpsc::Sender<Command>,
     filter: FilterState,
 }
 
 impl Files {
-    pub fn new(cache: Arc<Cache>, player: Arc<Mutex<Player>>) -> Self {
+    pub fn new(cache: Arc<Cache>, cmd: mpsc::Sender<Command>) -> Self {
         Self {
             path: std::path::Path::new("/")
                 .canonicalize()
@@ -54,7 +54,7 @@ impl Files {
                 .collect(),
             selected: vec![0],
             cache,
-            player,
+            player_tx: cmd,
             filter: FilterState::Disabled,
         }
     }
@@ -63,9 +63,6 @@ impl Files {
         trace!("input_files: {:?}", event);
 
         let l = self.items()?.count();
-
-        trace!("lock player");
-        let mut player = self.player.lock().expect("Failed to lock player");
 
         if let Event::Key(KeyEvent {
             code, modifiers, ..
@@ -79,11 +76,25 @@ impl Files {
                     };
                 }
                 KeyCode::Char(' ') => {
-                    player.play_pause().expect("Failed to play/pause");
+                    self.player_tx
+                        .send(Command::PlayPause)
+                        .expect("Failed to send play/pause");
                 }
-                KeyCode::Char('n') => player.skip().expect("Failed to skip"),
-                KeyCode::Char('s') => player.stop().expect("Failed to stop"),
-                KeyCode::Char('c') => player.clear().expect("Failed to clear"),
+                KeyCode::Char('n') => {
+                    self.player_tx
+                        .send(Command::Skip)
+                        .expect("Failed to send skip");
+                }
+                KeyCode::Char('s') => {
+                    self.player_tx
+                        .send(Command::Stop)
+                        .expect("Failed to send stop");
+                }
+                KeyCode::Char('c') => {
+                    self.player_tx
+                        .send(Command::Clear)
+                        .expect("Failed to send clear");
+                }
                 KeyCode::Up => {
                     self.selected
                         .last_mut()
@@ -117,7 +128,9 @@ impl Files {
                     match c {
                         CacheEntry::File { .. } => {
                             trace!("queueing song: {:?}", self.path);
-                            player.queue(&self.path.join(f)).expect("Failed to queue");
+                            self.player_tx
+                                .send(Command::Enqueue(self.path.join(f).as_path().into()))
+                                .unwrap();
                         }
                         CacheEntry::Directory { .. } => {
                             self.path.push(f.clone());

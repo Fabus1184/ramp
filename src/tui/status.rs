@@ -1,6 +1,4 @@
-use std::{
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, RwLock};
 
 use itertools::Itertools;
 use log::trace;
@@ -12,16 +10,16 @@ use ratatui::{
     Frame,
 };
 
-use crate::{player::Player, song::StandardTagKey, tui::format_duration};
+use crate::{player::facade::PlayerFacade, song::StandardTagKey, tui::format_duration};
 
 use super::{Tui, UNKNOWN_STRING};
 
 pub struct Status {
-    player: Arc<Mutex<Player>>,
+    player: Arc<RwLock<PlayerFacade>>,
 }
 
 impl Status {
-    pub fn new(player: Arc<Mutex<Player>>) -> Self {
+    pub fn new(player: Arc<RwLock<PlayerFacade>>) -> Self {
         Self { player }
     }
 }
@@ -38,12 +36,13 @@ impl Tui for Status {
 
         trace!("locking player");
         let playing = Paragraph::new(
-            if let Some((song, path)) = self.player.lock().unwrap().current() {
+            if let Some(song) = self.player.read().unwrap().current_song() {
                 let title = song
                     .standard_tags
                     .get(&StandardTagKey::TrackTitle)
                     .map(|s| s.to_string())
-                    .or(path
+                    .or(song
+                        .path
                         .components()
                         .last()
                         .map(|s| s.as_os_str().to_string_lossy().to_string()))
@@ -84,9 +83,9 @@ impl Tui for Status {
         .alignment(ratatui::prelude::Alignment::Center);
 
         trace!("locking player");
-        let player = self.player.lock().unwrap();
-        let ratio = if let (Some((song, _)), Some(current_time)) =
-            (player.current(), player.current_time())
+        let player = self.player.read().unwrap();
+        let ratio = if let (Some(song), Some(current_time)) =
+            (player.current_song(), player.playing_duration())
         {
             current_time.as_secs_f64() / song.duration.as_secs_f64()
         } else {
@@ -100,17 +99,17 @@ impl Tui for Status {
             .label("")
             .gauge_style(Style::default().fg(Color::LightBlue).bg(Color::DarkGray));
         let elapsed = format_duration(
-            *player
-                .current_time()
-                .unwrap_or(&std::time::Duration::from_secs(0)),
+            player
+                .playing_duration()
+                .unwrap_or(std::time::Duration::from_secs(0)),
         );
         let duration = format!(
             " -{}",
             format_duration(
-                if let (Some((current, _)), Some(current_time)) =
-                    (player.current(), player.current_time())
+                if let (Some(song), Some(current_time)) =
+                    (player.current_song(), player.playing_duration())
                 {
-                    current.duration.saturating_sub(*current_time)
+                    song.duration.saturating_sub(current_time)
                 } else {
                     std::time::Duration::from_secs(0)
                 },

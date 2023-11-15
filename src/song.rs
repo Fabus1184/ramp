@@ -1,5 +1,15 @@
 use std::{collections::HashMap, fmt::Debug, num::NonZeroU32, time::Duration};
 
+use anyhow::Context;
+use log::warn;
+use symphonia::core::{
+    codecs,
+    formats::FormatOptions,
+    io::{MediaSourceStream, MediaSourceStreamOptions},
+    meta::MetadataOptions,
+    probe::Hint,
+};
+
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub enum Value {
     Binary(Box<[u8]>),
@@ -467,18 +477,125 @@ impl From<symphonia::core::meta::StandardTagKey> for StandardTagKey {
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct Song {
+    pub path: Box<std::path::Path>,
+    pub duration: Duration,
+    pub gain_factor: f32,
     pub standard_tags: HashMap<StandardTagKey, Value>,
     pub other_tags: HashMap<String, Value>,
-    pub duration: Duration,
 }
 
 impl Song {
-    pub fn gain_factor(&self) -> Option<f32> {
-        self.standard_tags
+    pub fn tag_string(&self, key: StandardTagKey) -> Option<&str> {
+        self.standard_tags.get(&key).and_then(|v| match v {
+            Value::String(s) => Some(s.as_str()),
+            _ => None,
+        })
+    }
+
+    pub fn load<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
+        let src = std::fs::File::open(&path)
+            .context(format!("Failed to open file {}", path.as_ref().display()))?;
+
+        let source = MediaSourceStream::new(Box::new(src), MediaSourceStreamOptions::default());
+
+        let extension = path
+            .as_ref()
+            .extension()
+            .unwrap()
+            .to_str()
+            .ok_or(anyhow::anyhow!(
+                "Failed to get extension for file {}",
+                path.as_ref().display()
+            ))?;
+
+        let mut probed = symphonia::default::get_probe().format(
+            &Hint::new().with_extension(extension),
+            source,
+            &FormatOptions {
+                prebuild_seek_index: false,
+                seek_index_fill_rate: 0,
+                enable_gapless: true,
+            },
+            &MetadataOptions::default(),
+        )?;
+
+        let mut metadata = probed.format.metadata();
+        let metadata = metadata.skip_to_latest().cloned();
+
+        let track = probed
+            .format
+            .tracks()
+            .into_iter()
+            .find(|t| t.codec_params.codec != codecs::CODEC_TYPE_NULL)
+            .ok_or(anyhow::anyhow!("No audio tracks found"))?;
+
+        let duration = track
+            .codec_params
+            .time_base
+            .ok_or(anyhow::anyhow!(
+                "No time base found for track {:?}",
+                track.id
+            ))?
+            .calc_time(track.codec_params.n_frames.ok_or(anyhow::anyhow!(
+                "No frame count found for track {:?}",
+                track.id
+            ))?);
+
+        let duration = std::time::Duration::from_secs_f64(duration.seconds as f64 + duration.frac);
+
+        let (standard_tags, other_tags) = metadata
+            .map(|m| {
+                let s = m
+                    .tags()
+                    .into_iter()
+                    .filter_map(|t| t.std_key.map(|k| (k.into(), t.value.clone().into())))
+                    .collect::<HashMap<_, _>>();
+
+                let o = m
+                    .tags()
+                    .into_iter()
+                    .filter(|t| t.std_key == None)
+                    .map(|t| (t.key.clone(), t.value.clone().into()))
+                    .collect::<HashMap<_, _>>();
+
+                (s, o)
+            })
+            .unwrap_or_default();
+
+        let replay_gain = standard_tags
             .get(&StandardTagKey::ReplayGainTrackGain)
-            .map(|x| x.to_string())
-            .and_then(|x| x.strip_suffix(" dB").map(|x| x.to_string()))
-            .and_then(|x| x.parse::<f32>().ok())
-            .map(|x| 10.0f32.powf(x / 20.0))
+            .ok_or(anyhow::anyhow!(
+                "No replay gain found for {}",
+                path.as_ref().display()
+            ))
+            .and_then(|v| match v {
+                Value::String(s) => {
+                    s.strip_suffix(" dB")
+                        .unwrap_or(s)
+                        .parse::<f32>()
+                        .context(format!(
+                            "Failed to parse replay gain for {}",
+                            path.as_ref().display()
+                        ))
+                }
+                v => anyhow::bail!("Expected string, got {:?}", v),
+            })
+            .map(|x| 10_f32.powf(x / 20.0))
+            .unwrap_or_else(|e| {
+                warn!(
+                    "Failed to get replay gain for {}: {}",
+                    path.as_ref().display(),
+                    e
+                );
+                1.0
+            });
+
+        Ok(Song {
+            path: path.as_ref().into(),
+            duration,
+            standard_tags,
+            other_tags,
+            gain_factor: replay_gain,
+        })
     }
 }

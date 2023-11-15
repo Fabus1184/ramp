@@ -1,24 +1,19 @@
-use std::{
-    fs::File,
-    io::{Read, Write},
-    sync::{atomic::Ordering, Arc},
-};
+use std::{fs::File, sync::Arc};
 
+use anyhow::Context;
 use cache::Cache;
 use log::{info, trace, warn, LevelFilter};
-use player::Player;
 use simplelog::{CombinedLogger, WriteLogger};
 
-use crate::{config::Config, tui::tui};
+use crate::{config::Config, player::Player, tui::tui};
 
 mod cache;
 mod config;
-mod decoder;
 mod player;
 mod song;
 mod tui;
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let config_dir = dirs::config_dir()
         .expect("Unable to find config directory")
         .join("ramp");
@@ -42,7 +37,7 @@ fn main() {
         }),
     );
 
-    let _logger = CombinedLogger::init(vec![WriteLogger::new(
+    CombinedLogger::init(vec![WriteLogger::new(
         #[cfg(debug_assertions)]
         LevelFilter::Trace,
         #[cfg(not(debug_assertions))]
@@ -55,19 +50,8 @@ fn main() {
             .build(),
         File::create(&config.log_path).expect("Failed to create log file"),
     )])
-    .expect("Failed to initialize logger");
-
-    let quit = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let mut f = File::open(&config.log_path).expect("Failed to open log file");
-    let _quit = quit.clone();
-    let handle = std::thread::spawn(move || {
-        while !_quit.load(Ordering::SeqCst) {
-            let mut buf = Vec::new();
-            f.read_to_end(&mut buf).unwrap();
-            std::io::stdout().write_all(&buf).unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-    });
+    .context("Failed to initialize logger")?;
+    info!("Logger initialized");
 
     trace!("loading cache");
     let (cache, old_config) = Cache::load(&config).unwrap_or_else(|e| {
@@ -99,25 +83,11 @@ fn main() {
     let cache = Arc::new(cache);
 
     trace!("initializing player");
-    let player = Player::new(cache.clone()).expect("Failed to initialize player");
-
-    {
-        trace!("attaching media controls");
-        player
-            .lock()
-            .unwrap()
-            .attach_media_controls()
-            .unwrap_or_else(|e| {
-                warn!("Failed to attach media controls: {e:?}");
-            });
-    }
-
-    quit.store(true, Ordering::SeqCst);
-    handle.join().expect("Failed to join log thread");
+    let (cmd, player) = Player::run(cache.clone()).context("Failed to initialize player")?;
 
     trace!("entering tui");
-    tui(config.clone(), cache.clone(), player.clone()).expect("Failed to run tui");
+    tui(config.clone(), cache.clone(), cmd, player).context("Error in tui")?;
     trace!("tui exited");
 
-    trace!("quitting");
+    Ok(())
 }

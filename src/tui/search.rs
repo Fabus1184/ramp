@@ -1,6 +1,6 @@
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{mpsc, Arc},
 };
 
 use crossterm::event::{Event, KeyCode, KeyEvent};
@@ -17,7 +17,7 @@ use strsim::jaro_winkler;
 
 use crate::{
     cache::{Cache, CacheEntry},
-    player::Player,
+    player::command::Command,
     song::{Song, StandardTagKey},
 };
 
@@ -27,17 +27,17 @@ pub struct Search {
     keyword: String,
     cache: Arc<Cache>,
     selected: usize,
-    player: Arc<Mutex<Player>>,
+    cmd: mpsc::Sender<Command>,
     items: Vec<(Song, PathBuf)>,
 }
 
 impl Search {
-    pub fn new(cache: Arc<Cache>, player: Arc<Mutex<Player>>) -> Self {
+    pub fn new(cache: Arc<Cache>, cmd: mpsc::Sender<Command>) -> Self {
         Self {
             keyword: String::new(),
             cache,
             selected: 0,
-            player,
+            cmd,
             items: vec![],
         }
     }
@@ -178,11 +178,7 @@ impl Tui for Search {
                         .ok_or(anyhow::anyhow!("Failed to get selected Song"))?
                         .clone();
 
-                    self.player
-                        .lock()
-                        .map_err(|e| anyhow::anyhow!("Failed to lock player: {:?}", e))?
-                        .queue(path)
-                        .expect("Failed to queue song");
+                    self.cmd.send(Command::Enqueue(path.as_path().into()))?;
                 }
                 _ => {}
             },

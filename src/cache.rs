@@ -1,4 +1,4 @@
-use crate::{config::Config, decoder, song::Song};
+use crate::{config::Config, song::Song};
 use std::{
     collections::HashMap,
     fs::Metadata,
@@ -64,7 +64,7 @@ impl Cache {
                 trace!("Found file {}", e.path().display());
             })
             .filter_map(|(e, m)| {
-                decoder::song_from_file(e.path())
+                Song::load(e.path())
                     .map(|s| (e.path().to_path_buf(), m, s))
                     .map_err(|e| {
                         warn!("Failed to read song from {:?}: {}", e, e);

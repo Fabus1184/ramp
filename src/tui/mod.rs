@@ -7,7 +7,7 @@ mod status;
 mod tabs;
 
 use std::{
-    sync::{Arc, Mutex},
+    sync::{mpsc, Arc, Mutex, RwLock},
     time::Duration,
 };
 
@@ -22,7 +22,11 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use crate::{cache::Cache, config::Config, player::Player};
+use crate::{
+    cache::Cache,
+    config::Config,
+    player::{command::Command, facade::PlayerFacade},
+};
 
 use self::{fancy::Fancy, files::Files, queue::Queue, search::Search, status::Status, tabs::Tabs};
 
@@ -48,7 +52,8 @@ pub trait Tui {
 pub fn tui<'a>(
     _config: Arc<Config>,
     cache: Arc<Cache>,
-    player: Arc<Mutex<Player>>,
+    cmd: mpsc::Sender<Command>,
+    player: Arc<RwLock<PlayerFacade>>,
 ) -> anyhow::Result<()> {
     let stdout = std::io::stdout();
     let backend = CrosstermBackend::new(stdout);
@@ -62,12 +67,15 @@ pub fn tui<'a>(
         vec![
             (
                 " Files 🗃️ ",
-                Box::new(Files::new(cache.clone(), player.clone())),
+                Box::new(Files::new(cache.clone(), cmd.clone())),
             ),
-            ("Queue 🕰️ ", Box::new(Queue::new(player.clone()))),
             (
-                "Search 🔎", /* idk, whatever */
-                Box::new(Search::new(cache.clone(), player.clone())),
+                "Queue 🕰️ ",
+                Box::new(Queue::new(cache.clone(), player.clone())),
+            ),
+            (
+                "Search 🔎",
+                Box::new(Search::new(cache.clone(), cmd.clone())),
             ),
             ("Fancy stuff ✨ ", Box::new(Fancy::new(player.clone()))),
         ],
