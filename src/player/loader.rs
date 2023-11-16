@@ -1,5 +1,6 @@
 use anyhow::Context;
 
+use log::{debug, trace};
 use symphonia::core::{
     audio::{SampleBuffer, SignalSpec},
     codecs::{DecoderOptions, CODEC_TYPE_NULL},
@@ -48,6 +49,7 @@ impl LoadedSong {
             .ok_or(anyhow::anyhow!("No audio tracks found"))?;
 
         let codec_params = track.codec_params.clone();
+        debug!("Codec params: {:?}", codec_params);
         let track_id = track.id;
 
         let mut decoder = symphonia::default::get_codecs()
@@ -61,6 +63,7 @@ impl LoadedSong {
                 .channels
                 .ok_or(anyhow::anyhow!("No channels"))?,
         );
+        debug!("Signal spec: {:?}", signal_spec);
 
         let signal_spec2 = signal_spec.clone();
         let decoder = move || match format_reader.next_packet() {
@@ -76,8 +79,19 @@ impl LoadedSong {
                     let mut sample_buffer = SampleBuffer::new(data.capacity() as u64, signal_spec2);
                     sample_buffer.copy_interleaved_ref(data);
 
+                    trace!(
+                        "Decoded packet for track {} ({} bytes)",
+                        packet.track_id(),
+                        packet.data.len()
+                    );
+
                     Ok((Some(sample_buffer), false))
                 } else {
+                    trace!(
+                        "Skipping packet for track {} ({} bytes)",
+                        packet.track_id(),
+                        packet.data.len()
+                    );
                     Ok((None, false))
                 }
             }

@@ -7,7 +7,7 @@ use cpal::{
     traits::{DeviceTrait, HostTrait},
     Stream, StreamConfig,
 };
-use log::warn;
+use log::{debug, warn};
 use souvlaki::{MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig};
 use std::{
     collections::VecDeque,
@@ -172,6 +172,7 @@ impl Player {
             sample_rate: cpal::SampleRate(song.signal_spec.rate),
             buffer_size: cpal::BufferSize::Default,
         };
+        debug!("Stream config: {:?}", config);
 
         let mut buffer = VecDeque::<f32>::new();
 
@@ -196,39 +197,30 @@ impl Player {
 
                     let mut duration = playing_duration2.write().unwrap();
 
-                    let mut n = buffer.len().min(dest.len());
-                    buffer.drain(0..n).enumerate().for_each(|(i, s)| {
-                        dest[i] = s * gain_factor;
-                    });
+                    let mut byte_count = 0;
+                    while byte_count < dest.len() {
+                        if buffer.len() < dest.len() {
+                            let (sample_buffer, end_of_stream) = (song.decoder)().unwrap();
+                            if let Some(sample_buffer) = sample_buffer {
+                                buffer.extend(sample_buffer.samples());
+                            }
+
+                            if end_of_stream {
+                                command_tx.send(Command::Skip).unwrap();
+                            }
+                        }
+
+                        buffer
+                            .drain(..(dest.len() - byte_count).min(buffer.len()))
+                            .for_each(|sample| {
+                                dest[byte_count] = sample * gain_factor;
+                                byte_count += 1;
+                            });
+                    }
 
                     *duration += Duration::from_secs_f64(
-                        n as f64
-                            / song.signal_spec.rate as f64
-                            / song.signal_spec.channels.count() as f64,
+                        dest.len() as f64 / config.channels as f64 / config.sample_rate.0 as f64,
                     );
-
-                    let (samples, eof) = (song.decoder)().expect("Failed to decode packet");
-
-                    if let Some(samples) = samples {
-                        buffer.extend(samples.samples());
-
-                        if n < dest.len() {
-                            n = buffer.len().min(dest.len() - n);
-                            buffer.drain(0..n).enumerate().for_each(|(i, s)| {
-                                dest[i] = s * gain_factor;
-                            });
-
-                            *duration += Duration::from_secs_f64(
-                                n as f64
-                                    / song.signal_spec.rate as f64
-                                    / song.signal_spec.channels.count() as f64,
-                            );
-                        }
-                    }
-
-                    if eof && buffer.is_empty() {
-                        command_tx.send(Command::Skip).unwrap();
-                    }
                 },
                 |e| {
                     warn!("Error in playback stream: {:?}", e);
