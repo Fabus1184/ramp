@@ -7,7 +7,7 @@ mod status;
 mod tabs;
 
 use std::{
-    sync::{mpsc, Arc, Mutex, RwLock},
+    sync::{atomic::AtomicBool, mpsc, Arc, Mutex, RwLock},
     time::Duration,
 };
 
@@ -62,7 +62,7 @@ pub fn tui<'a>(
     enable_raw_mode()?;
     terminal.clear()?;
 
-    let running = Mutex::new(true);
+    let running = Arc::new(AtomicBool::new(true));
     let mut tabs = Tabs::new(
         vec![
             (
@@ -79,7 +79,7 @@ pub fn tui<'a>(
             ),
             ("Fancy stuff ✨ ", Box::new(Fancy::new(player.clone()))),
         ],
-        &running,
+        running.clone(),
     );
 
     let usage = Status::new(player.clone());
@@ -99,7 +99,7 @@ pub fn tui<'a>(
             tabs.input(&event::read()?)?;
         }
 
-        if !*running.lock().unwrap() {
+        if !running.load(std::sync::atomic::Ordering::Relaxed) {
             break;
         }
     }

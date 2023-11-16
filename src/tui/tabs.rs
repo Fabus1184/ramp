@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{atomic::AtomicBool, Arc};
 
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use log::trace;
@@ -15,11 +15,11 @@ use super::Tui;
 pub struct Tabs<'a> {
     pub selected: usize,
     pub tabs: Vec<(&'static str, Box<dyn Tui + 'a>)>,
-    running: &'a Mutex<bool>,
+    running: Arc<AtomicBool>,
 }
 
 impl<'a> Tabs<'a> {
-    pub fn new(tabs: Vec<(&'static str, Box<dyn Tui + 'a>)>, running: &'a Mutex<bool>) -> Self {
+    pub fn new(tabs: Vec<(&'static str, Box<dyn Tui + 'a>)>, running: Arc<AtomicBool>) -> Self {
         Self {
             selected: 0,
             tabs,
@@ -86,8 +86,8 @@ impl Tui for Tabs<'_> {
                     self.selected = (self.selected.wrapping_sub(1)) % self.tabs.len();
                 }
                 KeyCode::Char('q') => {
-                    trace!("locking player");
-                    *self.running.lock().unwrap() = false;
+                    self.running
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
                 }
                 _ => {
                     let content = self.tabs.get_mut(self.selected).expect("Tab not found");
