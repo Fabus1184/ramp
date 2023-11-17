@@ -10,6 +10,7 @@ use crate::song::Song;
 use super::Player;
 
 #[derive(Default)]
+#[allow(clippy::large_enum_variant)]
 pub enum PlayerStatus {
     PlayingOrPaused {
         song: Song,
@@ -27,14 +28,13 @@ impl PlayerStatus {
             super::InternalPlayerStatus::PlayingOrPaused {
                 song,
                 metadata,
-                playing_duration,
-                stream_paused,
+                playback,
                 ..
             } => PlayerStatus::PlayingOrPaused {
                 song: song.clone(),
                 metadata: metadata.clone(),
-                playing_duration: playing_duration.clone(),
-                paused: stream_paused.clone(),
+                playing_duration: playback.played_duration.clone(),
+                paused: playback.pause.clone(),
             },
             super::InternalPlayerStatus::Stopped => PlayerStatus::Stopped,
         }

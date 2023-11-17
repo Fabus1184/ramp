@@ -7,7 +7,7 @@ mod status;
 mod tabs;
 
 use std::{
-    sync::{atomic::AtomicBool, mpsc, Arc, Mutex, RwLock},
+    sync::{atomic::AtomicBool, mpsc, Arc, RwLock},
     time::Duration,
 };
 
@@ -30,7 +30,7 @@ use crate::{
 
 use self::{fancy::Fancy, files::Files, queue::Queue, search::Search, status::Status, tabs::Tabs};
 
-pub const UNKNOWN_STRING: &'static str = "<unknown>";
+pub const UNKNOWN_STRING: &str = "<unknown>";
 
 pub fn format_duration(duration: Duration) -> String {
     let hours = duration.as_secs() / 3600;
@@ -49,7 +49,7 @@ pub trait Tui {
     fn input(&mut self, event: &Event) -> anyhow::Result<()>;
 }
 
-pub fn tui<'a>(
+pub fn tui(
     _config: Arc<Config>,
     cache: Arc<Cache>,
     cmd: mpsc::Sender<Command>,

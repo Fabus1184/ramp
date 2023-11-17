@@ -148,8 +148,8 @@ impl Tui for Search {
     }
 
     fn input(&mut self, event: &Event) -> anyhow::Result<()> {
-        match event {
-            Event::Key(KeyEvent { code, .. }) => match code {
+        if let Event::Key(KeyEvent { code, .. }) = event {
+            match code {
                 KeyCode::Char(c) => {
                     self.keyword.push(*c);
                     self.update_items();
@@ -159,7 +159,7 @@ impl Tui for Search {
                         self.update_items();
                     }
 
-                    if self.keyword.len() == 0 {
+                    if self.keyword.is_empty() {
                         self.items.clear();
                     }
                 }
@@ -181,8 +181,7 @@ impl Tui for Search {
                     self.cmd.send(Command::Enqueue(path.as_path().into()))?;
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
 
         self.selected = self.selected.clamp(0, self.items.len());

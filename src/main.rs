@@ -25,11 +25,11 @@ fn main() -> anyhow::Result<()> {
     }
 
     let config = Arc::new(
-        Config::load(&config_dir.join("config.json")).unwrap_or_else(|e| {
+        Config::load(config_dir.join("config.json")).unwrap_or_else(|e| {
             eprintln!("Failed to load config, using default: {e:?}");
             let config = Config::default_from_config_dir(&config_dir);
             config
-                .save(&config_dir.join("config.json"))
+                .save(config_dir.join("config.json"))
                 .unwrap_or_else(|e| {
                     eprintln!("Failed to save config: {e:?}");
                 });

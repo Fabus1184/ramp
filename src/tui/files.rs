@@ -96,34 +96,38 @@ impl Files {
                         .expect("Failed to send clear");
                 }
                 KeyCode::Up => {
-                    self.selected
-                        .last_mut()
-                        .map(|i| *i = i.checked_sub(1).unwrap_or(0));
+                    if let Some(i) = self.selected.last_mut() {
+                        *i = i.checked_sub(1).unwrap_or(0);
+                    }
                 }
                 KeyCode::Down => {
-                    self.selected.last_mut().map(|i| *i = (*i + 1).min(l - 1));
+                    if let Some(i) = self.selected.last_mut() {
+                        *i = (*i + 1).min(l - 1);
+                    }
                 }
                 KeyCode::PageUp => {
-                    self.selected
-                        .last_mut()
-                        .map(|i| *i = i.checked_sub(25).unwrap_or(0));
+                    if let Some(i) = self.selected.last_mut() {
+                        *i = i.checked_sub(25).unwrap_or(0);
+                    }
                 }
                 KeyCode::PageDown => {
-                    self.selected.last_mut().map(|i| *i = (*i + 25).min(l - 1));
+                    if let Some(i) = self.selected.last_mut() {
+                        *i = (*i + 25).min(l - 1);
+                    }
                 }
                 KeyCode::End => {
-                    self.selected.last_mut().map(|i| *i = l - 1);
+                    if let Some(i) = self.selected.last_mut() {
+                        *i = l - 1;
+                    }
                 }
                 KeyCode::Home => {
-                    self.selected.last_mut().map(|i| *i = 0);
+                    if let Some(i) = self.selected.last_mut() {
+                        *i = 0;
+                    }
                 }
                 KeyCode::Enter => {
                     let selected = *self.selected.last().expect("Failed to get selected index");
-                    let (f, c) = self
-                        .items()?
-                        .nth(selected)
-                        .expect("Failed to get item")
-                        .clone();
+                    let (f, c) = self.items()?.nth(selected).expect("Failed to get item");
 
                     match c {
                         CacheEntry::File { .. } => {
@@ -265,7 +269,7 @@ impl Tui for Files {
 
         let selected = *self.selected.last().expect("Failed to get selected index");
         let mut table_state = TableState::default()
-            .with_selected(Some((selected).min(len - 1).max(0) as usize))
+            .with_selected(Some((selected).min(len - 1).max(0)))
             .with_offset({
                 if len <= area.height as usize {
                     0
@@ -280,21 +284,7 @@ impl Tui for Files {
                 }
             });
 
-        let breadcrums = Paragraph::new(Line::from(
-            Span::from(format!("🔗 {}", self.path.display().to_string()))
-                .bold()
-                .light_red(),
-        ));
-
-        let layout = Layout::new()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
-            .split(inner_area);
-
-        let (path_area, files_area) = (layout[0], layout[1]);
-
-        f.render_widget(breadcrums, path_area);
-        f.render_stateful_widget(table, files_area, &mut table_state);
+        f.render_stateful_widget(table, inner_area, &mut table_state);
 
         if let Some(search_bar_area) = filter_area {
             f.render_widget(search_bar, search_bar_area);
@@ -342,10 +332,9 @@ impl Tui for Files {
 
         let l = self.items()?.count();
 
-        self.selected
-            .last_mut()
-            .filter(|i| **i >= l)
-            .map(|i| *i = l - 1);
+        if let Some(i) = self.selected.last_mut().filter(|i| **i >= l) {
+            *i = l - 1;
+        }
 
         Ok(())
     }

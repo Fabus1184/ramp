@@ -1,7 +1,6 @@
 use crate::{config::Config, song::Song};
 use std::{
     collections::HashMap,
-    fs::Metadata,
     path::{Path, PathBuf},
 };
 
@@ -45,7 +44,7 @@ impl Cache {
         config
             .search_directories
             .iter()
-            .flat_map(|d| WalkDir::new(d))
+            .flat_map(WalkDir::new)
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().is_file())
             .filter(|e| {
@@ -54,33 +53,27 @@ impl Cache {
                     .map(|e| config.extensions.contains(e.to_str().unwrap_or("")))
                     .unwrap_or(false)
             })
-            .filter_map(|e| {
-                e.metadata()
-                    .map(|m| (e, m))
-                    .map_err(|e| warn!("Failed to read metadata {:?}", e))
-                    .ok()
-            })
-            .inspect(|(e, _)| {
+            .inspect(|e| {
                 trace!("Found file {}", e.path().display());
             })
-            .filter_map(|(e, m)| {
+            .filter_map(|e| {
                 Song::load(e.path())
-                    .map(|s| (e.path().to_path_buf(), m, s))
+                    .map(|s| (e.path().to_path_buf(), s))
                     .map_err(|e| {
                         warn!("Failed to read song from {:?}: {}", e, e);
                     })
                     .ok()
             })
-            .for_each(|(p, m, s)| {
+            .for_each(|(p, s)| {
                 cache
-                    .insert_file(&p, m, s)
+                    .insert_file(&p, s)
                     .unwrap_or_else(|e| warn!("Failed to insert file {:?}: {}", p, e));
             });
 
         cache
     }
 
-    fn insert_file<P>(&mut self, path: P, meta: Metadata, song: Song) -> anyhow::Result<()>
+    fn insert_file<P>(&mut self, path: P, song: Song) -> anyhow::Result<()>
     where
         P: AsRef<Path>,
     {
@@ -105,7 +98,7 @@ impl Cache {
             .or_insert(CacheEntry::Directory {
                 children: HashMap::new(),
             })
-            .insert_file(cs, meta, song)?;
+            .insert_file(cs, song)?;
 
         Ok(())
     }
@@ -229,12 +222,7 @@ impl CacheEntry {
         }
     }
 
-    fn insert_file(
-        &mut self,
-        mut path: Vec<&str>,
-        meta: Metadata,
-        song: Song,
-    ) -> anyhow::Result<()> {
+    fn insert_file(&mut self, mut path: Vec<&str>, song: Song) -> anyhow::Result<()> {
         match self {
             CacheEntry::File { .. } => {
                 anyhow::bail!("CacheEntry::insert_file called on {:?}", self)
@@ -260,7 +248,7 @@ impl CacheEntry {
                         .or_insert_with(|| CacheEntry::Directory {
                             children: HashMap::new(),
                         })
-                        .insert_file(path, meta, song)
+                        .insert_file(path, song)
                 }
             }
         }

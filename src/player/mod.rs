@@ -3,34 +3,29 @@ use crate::{
     song::{Song, StandardTagKey},
 };
 use anyhow::Context;
-use cpal::{
-    traits::{DeviceTrait, HostTrait},
-    Stream, StreamConfig,
-};
-use log::{debug, warn};
+use log::warn;
 use souvlaki::{MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig};
 use std::{
     collections::VecDeque,
-    io::{Seek, Write},
-    sync::{atomic::AtomicBool, mpsc, Arc, RwLock},
-    time::Duration,
+    io::Write,
+    sync::{mpsc, Arc, RwLock},
 };
 use symphonia::core::meta::MetadataRevision;
 use tempfile::NamedTempFile;
 
-use self::{command::Command, facade::PlayerFacade, loader::LoadedSong};
+use self::{command::Command, facade::PlayerFacade, loader::LoadedSong, playback::Playback};
 
 pub mod command;
 pub mod facade;
 mod loader;
+mod playback;
 
+#[allow(clippy::large_enum_variant)]
 enum InternalPlayerStatus {
     PlayingOrPaused {
         song: Song,
         metadata: Option<MetadataRevision>,
-        playing_duration: Arc<RwLock<Duration>>,
-        stream_paused: Arc<AtomicBool>,
-        _stream: Stream,
+        playback: Playback,
     },
     Stopped,
 }
@@ -47,12 +42,11 @@ impl Player {
     /// command player to continue playing or start playing the next song
     fn play(&mut self) -> anyhow::Result<()> {
         match &self.status {
-            InternalPlayerStatus::PlayingOrPaused {
-                stream_paused: paused,
-                ..
-            } => {
-                if paused.load(std::sync::atomic::Ordering::Relaxed) {
-                    paused.store(false, std::sync::atomic::Ordering::Relaxed);
+            InternalPlayerStatus::PlayingOrPaused { playback, .. } => {
+                if playback.pause.load(std::sync::atomic::Ordering::Relaxed) {
+                    playback
+                        .pause
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
                 }
             }
             InternalPlayerStatus::Stopped => {}
@@ -72,15 +66,12 @@ impl Player {
                 let loaded_song = LoadedSong::load(song.clone()).context("Failed to load song")?;
 
                 let metadata = loaded_song.metadata.clone();
-                let (stream_paused, playing_duration, _stream) =
-                    self.create_playback(loaded_song)?;
+                let playback = Playback::new(self.command_tx.clone(), loaded_song)?;
 
                 self.status = InternalPlayerStatus::PlayingOrPaused {
                     song,
                     metadata,
-                    playing_duration,
-                    stream_paused,
-                    _stream,
+                    playback,
                 }
             }
         }
@@ -91,11 +82,10 @@ impl Player {
     /// command player to pause
     fn pause(&mut self) -> anyhow::Result<()> {
         match &self.status {
-            InternalPlayerStatus::PlayingOrPaused {
-                stream_paused: paused,
-                ..
-            } => {
-                paused.store(true, std::sync::atomic::Ordering::Relaxed);
+            InternalPlayerStatus::PlayingOrPaused { playback, .. } => {
+                playback
+                    .pause
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
             }
             InternalPlayerStatus::Stopped => {}
         }
@@ -106,11 +96,10 @@ impl Player {
     /// command player to play if paused or pause if playing
     fn play_pause(&mut self) -> anyhow::Result<()> {
         match &self.status {
-            InternalPlayerStatus::PlayingOrPaused {
-                stream_paused: paused,
-                ..
-            } => {
-                paused.fetch_xor(true, std::sync::atomic::Ordering::Relaxed);
+            InternalPlayerStatus::PlayingOrPaused { playback, .. } => {
+                playback
+                    .pause
+                    .fetch_xor(true, std::sync::atomic::Ordering::Relaxed);
             }
             InternalPlayerStatus::Stopped => {}
         }
@@ -160,76 +149,6 @@ impl Player {
         self.stop()?;
 
         Ok(())
-    }
-
-    /// create playback stream for song
-    fn create_playback(
-        &mut self,
-        mut song: LoadedSong,
-    ) -> anyhow::Result<(Arc<AtomicBool>, Arc<RwLock<Duration>>, Stream)> {
-        let config = StreamConfig {
-            channels: song.signal_spec.channels.count() as u16,
-            sample_rate: cpal::SampleRate(song.signal_spec.rate),
-            buffer_size: cpal::BufferSize::Default,
-        };
-        debug!("Stream config: {:?}", config);
-
-        let mut buffer = VecDeque::<f32>::new();
-
-        let pause_stream = Arc::new(AtomicBool::new(false));
-        let playing_duration = Arc::new(RwLock::new(Duration::from_secs(0)));
-
-        let gain_factor = song.song.gain_factor;
-        let pause_stream2 = pause_stream.clone();
-        let playing_duration2 = playing_duration.clone();
-        let command_tx = self.command_tx.clone();
-
-        let stream = cpal::default_host()
-            .default_output_device()
-            .expect("Failed to get default output device")
-            .build_output_stream::<f32, _, _>(
-                &config,
-                move |dest, _info| {
-                    if pause_stream2.load(std::sync::atomic::Ordering::Relaxed) {
-                        dest.fill(0.0);
-                        return;
-                    }
-
-                    let mut duration = playing_duration2.write().unwrap();
-
-                    let mut byte_count = 0;
-                    while byte_count < dest.len() {
-                        if buffer.len() < dest.len() {
-                            let (sample_buffer, end_of_stream) = (song.decoder)().unwrap();
-                            if let Some(sample_buffer) = sample_buffer {
-                                buffer.extend(sample_buffer.samples());
-                            }
-
-                            if end_of_stream {
-                                command_tx.send(Command::Skip).unwrap();
-                            }
-                        }
-
-                        buffer
-                            .drain(..(dest.len() - byte_count).min(buffer.len()))
-                            .for_each(|sample| {
-                                dest[byte_count] = sample * gain_factor;
-                                byte_count += 1;
-                            });
-                    }
-
-                    *duration += Duration::from_secs_f64(
-                        dest.len() as f64 / config.channels as f64 / config.sample_rate.0 as f64,
-                    );
-                },
-                |e| {
-                    warn!("Error in playback stream: {:?}", e);
-                },
-                None,
-            )
-            .expect("Failed to build output stream");
-
-        Ok((pause_stream, playing_duration, stream))
     }
 
     pub fn run(

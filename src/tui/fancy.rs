@@ -2,7 +2,6 @@ use std::sync::{Arc, RwLock};
 
 use crossterm::event::Event;
 use image::imageops::FilterType;
-use log::trace;
 use ratatui::{
     prelude::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
@@ -27,7 +26,6 @@ impl Fancy {
 
 impl Tui for Fancy {
     fn draw(&self, area: Rect, f: &mut Frame) -> anyhow::Result<()> {
-        trace!("locking player");
         let player = self.player.read().expect("Failed to lock player");
 
         let standard_tags = Table::new(

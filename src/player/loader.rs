@@ -13,11 +13,13 @@ use symphonia::core::{
 
 use crate::song::Song;
 
+pub type Decoder = dyn FnMut() -> anyhow::Result<(Option<SampleBuffer<f32>>, bool)> + Send;
+
 pub struct LoadedSong {
     pub song: Song,
     pub metadata: Option<MetadataRevision>,
     pub signal_spec: SignalSpec,
-    pub decoder: Box<dyn FnMut() -> anyhow::Result<(Option<SampleBuffer<f32>>, bool)> + Send>,
+    pub decoder: Box<Decoder>,
 }
 
 impl LoadedSong {
@@ -44,7 +46,7 @@ impl LoadedSong {
 
         let track = format_reader
             .tracks()
-            .into_iter()
+            .iter()
             .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
             .ok_or(anyhow::anyhow!("No audio tracks found"))?;
 
@@ -65,7 +67,6 @@ impl LoadedSong {
         );
         debug!("Signal spec: {:?}", signal_spec);
 
-        let signal_spec2 = signal_spec.clone();
         let decoder = move || match format_reader.next_packet() {
             Ok(packet) => {
                 if packet.track_id() == track_id {
@@ -76,7 +77,7 @@ impl LoadedSong {
                         }
                     };
 
-                    let mut sample_buffer = SampleBuffer::new(data.capacity() as u64, signal_spec2);
+                    let mut sample_buffer = SampleBuffer::new(data.capacity() as u64, signal_spec);
                     sample_buffer.copy_interleaved_ref(data);
 
                     trace!(

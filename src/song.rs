@@ -509,7 +509,7 @@ impl Song {
             ))?;
 
         let mut probed = symphonia::default::get_probe().format(
-            &Hint::new().with_extension(extension),
+            Hint::new().with_extension(extension),
             source,
             &FormatOptions {
                 prebuild_seek_index: false,
@@ -525,7 +525,7 @@ impl Song {
         let track = probed
             .format
             .tracks()
-            .into_iter()
+            .iter()
             .find(|t| t.codec_params.codec != codecs::CODEC_TYPE_NULL)
             .ok_or(anyhow::anyhow!("No audio tracks found"))?;
 
@@ -547,14 +547,14 @@ impl Song {
             .map(|m| {
                 let s = m
                     .tags()
-                    .into_iter()
+                    .iter()
                     .filter_map(|t| t.std_key.map(|k| (k.into(), t.value.clone().into())))
                     .collect::<HashMap<_, _>>();
 
                 let o = m
                     .tags()
-                    .into_iter()
-                    .filter(|t| t.std_key == None)
+                    .iter()
+                    .filter(|t| t.std_key.is_none())
                     .map(|t| (t.key.clone(), t.value.clone().into()))
                     .collect::<HashMap<_, _>>();
 

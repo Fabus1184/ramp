@@ -34,12 +34,12 @@ impl Config {
         Ok(())
     }
 
-    pub fn default_from_config_dir(config_dir: &PathBuf) -> Self {
+    pub fn default_from_config_dir<P: AsRef<std::path::Path>>(config_dir: P) -> Self {
         Self {
             search_directories: vec![],
             extensions: HashSet::new(),
-            cache_path: config_dir.join("ramp.cache"),
-            log_path: config_dir.join("ramp.log"),
+            cache_path: config_dir.as_ref().join("ramp.cache"),
+            log_path: config_dir.as_ref().join("ramp.log"),
             gain: OrderedFloat(0.0),
         }
     }

@@ -77,8 +77,8 @@ impl Tui for Tabs<'_> {
 
     fn input(&mut self, event: &Event) -> anyhow::Result<()> {
         trace!("Tabs input: {:?}", event);
-        match event {
-            Event::Key(KeyEvent { code, .. }) => match code {
+        if let Event::Key(KeyEvent { code, .. }) = event {
+            match code {
                 KeyCode::Tab => {
                     self.selected = (self.selected + 1) % self.tabs.len();
                 }
@@ -93,8 +93,7 @@ impl Tui for Tabs<'_> {
                     let content = self.tabs.get_mut(self.selected).expect("Tab not found");
                     content.1.input(event)?;
                 }
-            },
-            _ => {}
+            }
         }
 
         Ok(())

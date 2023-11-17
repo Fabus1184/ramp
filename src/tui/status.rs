@@ -1,7 +1,6 @@
 use std::sync::{Arc, RwLock};
 
 use itertools::Itertools;
-use log::trace;
 use ratatui::{
     prelude::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Style, Stylize},
@@ -34,7 +33,6 @@ impl Tui for Status {
                 horizontal: 1,
             }));
 
-        trace!("locking player");
         let playing = Paragraph::new(
             if let Some(song) = self.player.read().unwrap().current_song() {
                 let title = song
@@ -82,7 +80,6 @@ impl Tui for Status {
         )
         .alignment(ratatui::prelude::Alignment::Center);
 
-        trace!("locking player");
         let player = self.player.read().unwrap();
         let ratio = if let (Some(song), Some(current_time)) =
             (player.current_song(), player.playing_duration())
@@ -94,7 +91,7 @@ impl Tui for Status {
         .clamp(0.0, 1.0);
 
         let progress = LineGauge::default()
-            .ratio(ratio as f64)
+            .ratio(ratio)
             .line_set(ratatui::symbols::line::DOUBLE)
             .label("")
             .gauge_style(Style::default().fg(Color::LightBlue).bg(Color::DarkGray));

@@ -4,8 +4,8 @@ use crossterm::event::Event;
 use log::trace;
 use ratatui::{
     prelude::Constraint,
-    style::{Color, Modifier, Style, Stylize},
-    widgets::Table,
+    style::{Color, Modifier, Stylize},
+    widgets::{Table, TableState},
 };
 
 use crate::{cache::Cache, player::facade::PlayerFacade, tui::song_table};
@@ -34,18 +34,17 @@ impl Tui for Queue {
             .queue
             .iter()
             .map(|p| self.cache.get(p).unwrap().unwrap().as_file().unwrap())
-            .map(|s| song_table::song_row(s))
+            .map(song_table::song_row)
             .collect::<Vec<_>>();
 
         let table = Table::new(items.clone())
-            .header(song_table::HEADER())
-            .fg(Color::Rgb(210, 210, 210))
-            .highlight_style(
-                Style::default()
-                    .fg(Color::LightYellow)
+            .header(
+                song_table::HEADER()
+                    .fg(Color::LightBlue)
                     .add_modifier(Modifier::BOLD),
             )
-            .highlight_symbol("⏯️  ")
+            .fg(Color::Rgb(210, 210, 210))
+            .highlight_symbol("   ")
             .column_spacing(4)
             .widths(&[
                 Constraint::Percentage(5),
@@ -54,7 +53,11 @@ impl Tui for Queue {
                 Constraint::Percentage(30),
             ]);
 
-        f.render_widget(table, area);
+        f.render_stateful_widget(
+            table,
+            area,
+            &mut TableState::default().with_selected(Some(0)),
+        );
 
         Ok(())
     }
